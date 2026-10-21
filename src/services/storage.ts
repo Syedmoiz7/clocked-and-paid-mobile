@@ -1,10 +1,10 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import Storage from "expo-sqlite/kv-store";
 import type { AppState } from "../types";
 
 const STORAGE_KEY = "clocked-and-paid.mobile.state.v1";
 
 export async function loadAppState(): Promise<AppState | null> {
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+  const raw = await Storage.getItem(STORAGE_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as AppState;
@@ -14,5 +14,5 @@ export async function loadAppState(): Promise<AppState | null> {
 }
 
 export async function saveAppState(state: AppState): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  await Storage.setItem(STORAGE_KEY, JSON.stringify(state));
 }

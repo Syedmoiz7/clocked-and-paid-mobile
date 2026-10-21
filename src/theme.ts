@@ -20,7 +20,7 @@ export const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: 30, fontWeight: "800", marginTop: 6 },
   subtitle: { color: colors.muted, fontSize: 15, lineHeight: 22, marginTop: 8 },
   card: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 22, borderWidth: 1, padding: 18, marginTop: 16 },
-  cardTitle: { color: colors.text, fontSize: 17, fontWeight: "750" },
+  cardTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
   cardMeta: { color: colors.muted, fontSize: 13, marginTop: 5 },
   button: { alignItems: "center", backgroundColor: colors.accent, borderRadius: 16, minHeight: 54, justifyContent: "center", paddingHorizontal: 18 },
   buttonText: { color: "#071312", fontSize: 16, fontWeight: "800" },
