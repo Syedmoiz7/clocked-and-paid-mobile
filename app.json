@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Clocked & Paid",
+    "slug": "clocked-and-paid",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "clockedandpaid",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.clockedandpaid.mobile"
+    },
+    "android": {
+      "package": "com.clockedandpaid.mobile"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
