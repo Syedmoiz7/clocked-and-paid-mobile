@@ -5,6 +5,7 @@ import { addManualShift, clearScheduledReminders, clockIn, clockOut, clockOutExt
 import { useAppDispatch, useAppSelector } from "../store/hooks";
 import type { Shift } from "../types";
 import { cancelReminder, requestReminderPermission, scheduleReminder } from "../services/notifications";
+import { localDate } from "../features/history/model";
 
 function createShift(jobId: string): Shift {
   const now = new Date().toISOString();
@@ -186,7 +187,7 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
       activeShift={activeShift}
       extraShifts={extraShifts}
       orphanedShift={orphanedShift}
-      completedToday={history.filter((shift) => shift.date === new Date().toISOString().slice(0, 10))}
+      completedToday={history.filter((shift) => shift.date === localDate() && shift.entryType !== "project" && !shift.missingClockIn && Boolean(shift.endedAt))}
       todayPlan={todayPlan}
       defaultPlan={defaultPlan}
       jobs={jobs}

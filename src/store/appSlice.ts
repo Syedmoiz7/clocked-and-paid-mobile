@@ -19,6 +19,9 @@ export const initialAppState: AppState = {
   notificationPromptDismissed: false,
   scheduledLunchReminderId: null,
   scheduledReturnReminderId: null,
+  deductions: [],
+  paychecks: [],
+  payVisible: true,
 };
 
 const appSlice = createSlice({
@@ -59,6 +62,20 @@ const appSlice = createSlice({
       const index = state.history.findIndex((shift) => shift.id === action.payload.id);
       if (index >= 0) state.history[index] = { ...state.history[index], ...action.payload.changes } as Shift;
     },
+    deleteHistoryShift: (state, action: PayloadAction<string>) => {
+      state.history = state.history.filter((shift) => shift.id !== action.payload);
+    },
+    toggleHistoryPaid: (state, action: PayloadAction<string>) => {
+      const shift = state.history.find((item) => item.id === action.payload);
+      if (shift) { shift.paid = !shift.paid; shift.paidAt = shift.paid ? new Date().toISOString() : null; }
+    },
+    markHistoryPaidMany: (state, action: PayloadAction<string[]>) => {
+      const ids = new Set(action.payload);
+      state.history.forEach((shift) => {
+        const paycheck = state.paychecks.some((paycheck) => paycheck.paid && paycheck.jobId === shift.jobId && shift.date >= paycheck.startDate && shift.date <= paycheck.endDate);
+        if (ids.has(shift.id) && !shift.paid && shift.entryType !== "project" && !paycheck) { shift.paid = true; shift.paidAt = new Date().toISOString(); }
+      });
+    },
     clockOut: (state, action: PayloadAction<Shift>) => {
       state.activeShift = null;
       state.history.unshift(action.payload);
@@ -97,8 +114,21 @@ const appSlice = createSlice({
       }
     },
     addManualShift: (state, action: PayloadAction<Shift>) => {
-      state.activeShift = null;
       state.history.unshift(action.payload);
+    },
+    setPayVisible: (state, action: PayloadAction<boolean>) => { state.payVisible = action.payload; },
+    setPremiumPreview: (state, action: PayloadAction<boolean>) => { state.isPremium = action.payload; },
+    discardActiveHistoryShift: (state) => {
+      if (state.activeShift) state.history = state.history.filter((shift) => shift.id !== state.activeShift!.id);
+      state.activeShift = null;
+      state.scheduledLunchReminderId = null;
+      state.scheduledReturnReminderId = null;
+    },
+    reactivateHistoryShift: (state, action: PayloadAction<string>) => {
+      const shift = state.history.find((shift) => shift.id === action.payload);
+      if (state.activeShift || !shift || shift.entryType === "project" || shift.missingClockIn || shift.endedAt) return;
+      state.activeShift = { ...shift };
+      state.history = state.history.filter((item) => item.id !== shift.id);
     },
     updateTodayPlan: (state, action: PayloadAction<Partial<TodayPlan>>) => {
       state.todayPlan = { ...state.todayPlan, ...action.payload };
@@ -118,5 +148,6 @@ const appSlice = createSlice({
   },
 });
 
-export const { hydrate, clockIn, startExtraShift, clockOutExtraShift, updateHistoryShift, clockOut, resolveOrphanedShift, discardOrphanedShift, updateBreakPreference, setNotificationPermission, dismissNotificationPrompt, setScheduledLunchReminder, setScheduledReturnReminder, clearScheduledReminders, startLunch, endLunch, startBreak, endBreak, addManualShift, updateTodayPlan, savePlanAsDefault, resetTodayPlan, selectJob, updateReminders } = appSlice.actions;
+export const { hydrate, clockIn, startExtraShift, clockOutExtraShift, updateHistoryShift, deleteHistoryShift, toggleHistoryPaid, markHistoryPaidMany, clockOut, resolveOrphanedShift, discardOrphanedShift, updateBreakPreference, setNotificationPermission, dismissNotificationPrompt, setScheduledLunchReminder, setScheduledReturnReminder, clearScheduledReminders, startLunch, endLunch, startBreak, endBreak, addManualShift, updateTodayPlan, savePlanAsDefault, resetTodayPlan, selectJob, updateReminders } = appSlice.actions;
 export const appReducer = appSlice.reducer;
+export const { setPayVisible, setPremiumPreview, discardActiveHistoryShift, reactivateHistoryShift } = appSlice.actions;

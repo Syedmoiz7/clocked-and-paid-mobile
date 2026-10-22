@@ -1,60 +1,640 @@
-import { useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { colors, styles } from "../theme";
-import type { Shift } from "../types";
-import { PaywallCard } from "../components/PaywallCard";
+import { useEffect, useMemo, useState } from "react";
+import { Alert, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-type Filter = "all" | "week" | "lastWeek" | "month" | "year" | "custom";
-type EarningsView = "all" | "net" | "tips";
-
-function formatDate(value: string) {
-  return new Date(`${value}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+import type { AppState, Shift } from "../types";
+import { colors, styles } from "../theme";
+import {
+  Action,
+  Choices,
+  DateField,
+  EntryForm,
+  Toggle,
+} from "../features/history/EntryForm";
+import { CalendarView } from "../features/history/CalendarView";
+import { PaywallCard } from "../components/PaywallCard";
+import {
+  blankDraft,
+  defaultFilters,
+  draftForEntry,
+  duration,
+  entitledEntries,
+  filterEntries,
+  localDate,
+  money,
+  paymentStatus,
+  periodDeductions,
+  selectable,
+  timeValue,
+  validDate,
+  wagesFor,
+  workedMinutes,
+  type EntryDraft,
+  type HistoryFilters,
+} from "../features/history/model";
+type Props = {
+  data: AppState;
+  onSave: (draft: EntryDraft, id?: string) => string | null;
+  onDelete: (id: string) => void;
+  onPaid: (id: string) => void;
+  onBulkPaid: (ids: string[]) => void;
+  onExport: (entries: Shift[]) => void;
+  onPayVisibility: (visible: boolean) => void;
+  onOpenTracker: () => void;
+  onDiscard: () => void;
+  onReactivate: (id: string) => void;
+  onPremium: () => void;
+  onEndPreview: () => void;
+};
+const periodOptions = [
+  { value: "all", label: "All time" },
+  { value: "week", label: "This week" },
+  { value: "lastWeek", label: "Last week" },
+  { value: "month", label: "This month" },
+  { value: "year", label: "This year" },
+  { value: "custom", label: "Custom" },
+];
+export function HistoryScreen({
+  data,
+  onSave,
+  onDelete,
+  onPaid,
+  onBulkPaid,
+  onExport,
+  onPayVisibility,
+  onOpenTracker,
+  onDiscard,
+  onReactivate,
+  onPremium,
+  onEndPreview,
+}: Props) {
+  const {
+    history,
+    activeShift,
+    jobs,
+    paychecks,
+    deductions,
+    todayPlan: plan,
+    payVisible,
+  } = data;
+  const [filters, setFilters] = useState(defaultFilters);
+  const [showFilters, setShowFilters] = useState(false);
+  const [view, setView] = useState("list");
+  const [form, setForm] = useState<{
+    draft: EntryDraft;
+    id?: string;
+  } | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!activeShift) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [activeShift]);
+  const update = (changes: Partial<HistoryFilters>) =>
+    setFilters((current) => ({ ...current, ...changes }));
+  const filtered = useMemo(
+    () => filterEntries(history, filters, activeShift?.id),
+    [history, filters, activeShift?.id],
+  );
+  const entries = entitledEntries(filtered, data.isPremium);
+  const eligible = entries
+    .filter((entry) => selectable(entry, paychecks, jobs))
+    .map((entry) => entry.id);
+  const selectedEligible = selected.filter((id) => eligible.includes(id));
+  const liveMinutes = activeShift ? workedMinutes(activeShift, now) : 0;
+  const livePay = activeShift ? wagesFor(activeShift, jobs, plan, now) : 0;
+  const minutes =
+    entries.reduce((sum, entry) => sum + workedMinutes(entry), 0) + liveMinutes;
+  const wages =
+    entries.reduce((sum, entry) => sum + wagesFor(entry, jobs, plan), 0) +
+    livePay;
+  const tips = entries.reduce(
+    (sum, entry) =>
+      sum + (entry.entryType === "project" ? 0 : (entry.tips ?? 0)),
+    0,
+  );
+  const deductionsTotal = periodDeductions(deductions, entries, filters.jobId);
+  const gross = wages + (filters.excludeTips ? 0 : tips);
+  const total =
+    filters.earnings === "tips"
+      ? tips
+      : filters.earnings === "net"
+        ? gross - (filters.excludeDeductions ? 0 : deductionsTotal)
+        : gross;
+  const currency =
+    jobs.find((job) => job.id === filters.jobId)?.currency ?? "USD";
+  const amount = (value: number, code = currency) =>
+    payVisible ? money(value, code) : "•••••";
+  const activeFilterCount = [
+    filters.jobId !== null,
+    filters.unpaidOnly,
+    filters.type !== "all",
+    filters.earnings !== "all",
+    filters.excludeTips,
+    filters.excludeDeductions,
+  ].filter(Boolean).length;
+  const clearFilters = () => setFilters(defaultFilters());
+  const toggleSelected = (id: string) =>
+    setSelected((current) =>
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id],
+    );
+  const confirmBulk = () =>
+    Alert.alert(
+      "Mark selected shifts as paid?",
+      `${selectedEligible.length} selected shift(s) will be marked paid.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Confirm",
+          onPress: () => {
+            onBulkPaid(selectedEligible);
+            setSelected([]);
+            setSelectionMode(false);
+          },
+        },
+      ],
+    );
+  const totalLabel =
+    filters.earnings === "tips"
+      ? "Total Tips"
+      : filters.earnings === "net" && !filters.excludeDeductions
+        ? "Net Earnings"
+        : filters.excludeTips
+          ? "Wages Only"
+          : "Total Earned";
+  return (
+    <SafeAreaView style={styles.screen} edges={["top"]}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.title}>Work History</Text>
+        <Text style={styles.subtitle}>
+          {history.filter((entry) => entry.entryType !== "project").length}{" "}
+          shifts ·{" "}
+          {history.filter((entry) => entry.entryType === "project").length}{" "}
+          projects{activeShift ? " · 1 active" : ""}
+        </Text>
+        <Toggle
+          title="Show Pay"
+          value={payVisible}
+          onChange={onPayVisibility}
+        />
+        <Choices
+          options={[
+            { value: "list", label: "List" },
+            { value: "calendar", label: "Calendar" },
+          ]}
+          value={view}
+          onChange={(value) => {
+            setView(value);
+            setForm(null);
+            setSelectionMode(false);
+            setSelected([]);
+          }}
+        />
+        {data.isPremium && (
+          <Action title="End Premium preview" onPress={onEndPreview} />
+        )}
+        {!data.isPremium && view === "calendar" && (
+          <PaywallCard
+            title="Full History & Calendar"
+            description="Premium adds older entries, calendar views, summaries, and export."
+            onPress={onPremium}
+          />
+        )}
+        {view === "calendar" ? (
+          <>
+            {data.isPremium && (
+              <CalendarView
+                data={data}
+                onEdit={(entry) =>
+                  setForm({ id: entry.id, draft: draftForEntry(entry) })
+                }
+              />
+            )}
+            {form && (
+              <EntryForm
+                key={form.id}
+                initial={form.draft}
+                editing
+                jobs={jobs}
+                onCancel={() => setForm(null)}
+                onSave={(draft) => {
+                  const error = onSave(draft, form.id);
+                  if (!error) setForm(null);
+                  return error;
+                }}
+              />
+            )}
+          </>
+        ) : (
+          <>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Action
+                  title="+ Add Shift"
+                  onPress={() => setForm({ draft: blankDraft("shift") })}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Action
+                  title="+ Add Project"
+                  onPress={() => setForm({ draft: blankDraft("project") })}
+                />
+              </View>
+            </View>
+            <Action
+              title={selectionMode ? "Done selecting" : "Select shifts"}
+              onPress={() => {
+                setSelectionMode((current) => !current);
+                setSelected([]);
+              }}
+            />
+            <Choices
+              options={periodOptions}
+              value={filters.period}
+              onChange={(period) =>
+                update({ period: period as HistoryFilters["period"] })
+              }
+            />
+            <Action
+              title={`${showFilters ? "Hide" : "More"} filters${activeFilterCount ? ` (${activeFilterCount})` : ""}`}
+              onPress={() => setShowFilters((current) => !current)}
+            />
+            {filters.period === "custom" && (
+              <View style={styles.card}>
+                <DateField
+                  label="From"
+                  value={filters.from}
+                  onChange={(from) => update({ from })}
+                />
+                <DateField
+                  label="To"
+                  value={filters.to}
+                  onChange={(to) => update({ to })}
+                />
+                {(!validDate(filters.from) ||
+                  !validDate(filters.to) ||
+                  filters.from > filters.to) && (
+                  <Text style={[styles.cardMeta, { color: colors.warning }]}>
+                    Select a valid date range.
+                  </Text>
+                )}
+              </View>
+            )}
+            {showFilters && (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Entry Filters</Text>
+                <Text style={styles.cardMeta}>Job</Text>
+                <Choices
+                  options={[
+                    { value: "", label: "All jobs" },
+                    ...jobs.map((job) => ({ value: job.id, label: job.name })),
+                  ]}
+                  value={filters.jobId ?? ""}
+                  onChange={(jobId) => update({ jobId: jobId || null })}
+                />
+                <Choices
+                  options={[
+                    { value: "all", label: "All entries" },
+                    { value: "shifts", label: "Shifts only" },
+                    { value: "projects", label: "Projects only" },
+                  ]}
+                  value={filters.type}
+                  onChange={(type) =>
+                    update({ type: type as HistoryFilters["type"] })
+                  }
+                />
+                <Toggle
+                  title="Unpaid only"
+                  value={filters.unpaidOnly}
+                  onChange={(unpaidOnly) => update({ unpaidOnly })}
+                />
+                <Text style={[styles.cardTitle, { marginTop: 15 }]}>
+                  Earnings View
+                </Text>
+                <Choices
+                  options={[
+                    { value: "all", label: "Gross" },
+                    { value: "net", label: "Net" },
+                    { value: "tips", label: "Tips Only" },
+                  ]}
+                  value={filters.earnings}
+                  onChange={(earnings) =>
+                    update({ earnings: earnings as HistoryFilters["earnings"] })
+                  }
+                />
+                {filters.earnings !== "tips" && (
+                  <>
+                    <Toggle
+                      title="Exclude tips"
+                      value={filters.excludeTips}
+                      onChange={(excludeTips) => update({ excludeTips })}
+                    />
+                    {filters.earnings === "net" && (
+                      <Toggle
+                        title="Exclude deductions"
+                        value={filters.excludeDeductions}
+                        onChange={(excludeDeductions) =>
+                          update({ excludeDeductions })
+                        }
+                      />
+                    )}
+                  </>
+                )}
+                <Action title="Clear all filters" onPress={clearFilters} />
+              </View>
+            )}
+            {(entries.length > 0 || activeShift) && (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>{totalLabel}</Text>
+                <Text
+                  style={{
+                    color: colors.accent,
+                    fontSize: 30,
+                    fontWeight: "800",
+                    marginTop: 12,
+                  }}
+                >
+                  {amount(total)}
+                </Text>
+                <Text style={styles.cardMeta}>
+                  {duration(minutes)} · {entries.length + (activeShift ? 1 : 0)}{" "}
+                  entries
+                </Text>
+                {activeFilterCount > 0 && payVisible && (
+                  <>
+                    <Text style={styles.cardMeta}>Wages: {amount(wages)}</Text>
+                    <Text style={styles.cardMeta}>
+                      Tips: {amount(tips)}
+                      {filters.excludeTips ? " (excluded)" : ""}
+                    </Text>
+                    <Text style={styles.cardMeta}>
+                      Deductions: {amount(deductionsTotal)}
+                      {filters.earnings !== "net" || filters.excludeDeductions
+                        ? " (excluded)"
+                        : ""}
+                    </Text>
+                  </>
+                )}
+              </View>
+            )}
+            {form && (
+              <EntryForm
+                key={form.id ?? form.draft.entryType}
+                initial={form.draft}
+                editing={Boolean(form.id)}
+                jobs={jobs}
+                existingDates={history.map((entry) => entry.date)}
+                onCancel={() => setForm(null)}
+                onSave={(draft) => {
+                  const error = onSave(draft, form.id);
+                  if (!error) setForm(null);
+                  return error;
+                }}
+              />
+            )}
+            {selectionMode && (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>
+                  {selectedEligible.length} selected
+                </Text>
+                <Action
+                  title="Select all unpaid shifts"
+                  onPress={() => setSelected(eligible)}
+                />
+                <Action
+                  title="Clear selection"
+                  onPress={() => setSelected([])}
+                />
+                <Action
+                  title={`Mark ${selectedEligible.length} as paid`}
+                  disabled={!selectedEligible.length}
+                  onPress={confirmBulk}
+                />
+              </View>
+            )}
+            {activeShift && (
+              <View style={[styles.card, { borderColor: colors.accent }]}>
+                <Text style={[styles.cardTitle, { color: colors.accent }]}>
+                  Live · Active shift
+                </Text>
+                <Text style={styles.cardMeta}>
+                  In at {displayTime(activeShift.startedAt)} ·{" "}
+                  {liveDuration(liveMinutes)} worked
+                </Text>
+                <Text style={styles.cardMeta}>
+                  {amount(
+                    livePay,
+                    jobs.find((job) => job.id === activeShift.jobId)
+                      ?.currency ?? "USD",
+                  )}{" "}
+                  accruing
+                </Text>
+                <Action title="Open Tracker →" onPress={onOpenTracker} />
+                <Action
+                  title="Discard shift"
+                  onPress={() =>
+                    Alert.alert(
+                      "Discard active shift?",
+                      "This removes the current shift and its reminders.",
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Discard",
+                          style: "destructive",
+                          onPress: onDiscard,
+                        },
+                      ],
+                    )
+                  }
+                />
+              </View>
+            )}
+            {entries.length === 0 && !form && !activeShift && (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>
+                  {activeFilterCount || filters.period !== "all"
+                    ? "No matching entries"
+                    : "No history yet"}
+                </Text>
+                <Text style={styles.cardMeta}>
+                  Record a shift or add a past shift or flat-rate project.
+                </Text>
+                {(activeFilterCount > 0 || filters.period !== "all") && (
+                  <Action title="Clear all filters" onPress={clearFilters} />
+                )}
+              </View>
+            )}
+            {entries.map((entry) => {
+              const project = entry.entryType === "project";
+              const open = expanded === entry.id;
+              const status = paymentStatus(entry, paychecks, jobs);
+              const job = jobs.find((job) => job.id === entry.jobId);
+              const eligibleEntry = selectable(entry, paychecks, jobs);
+              return (
+                <View
+                  key={entry.id}
+                  style={[
+                    styles.card,
+                    selectedEligible.includes(entry.id) && {
+                      borderColor: colors.accent,
+                    },
+                  ]}
+                >
+                  <Action
+                    title={`${project ? entry.projectName || "Project" : entry.date} ${open ? "▴" : "▾"}`}
+                    onPress={() => setExpanded(open ? null : entry.id)}
+                  />
+                  <Text
+                    style={[
+                      styles.cardTitle,
+                      {
+                        color: project ? colors.blue : colors.accent,
+                        marginTop: 12,
+                      },
+                    ]}
+                  >
+                    {amount(
+                      wagesFor(entry, jobs, plan) +
+                        (project ? 0 : (entry.tips ?? 0)),
+                      entry.currency ?? job?.currency ?? "USD",
+                    )}
+                  </Text>
+                  <Text style={styles.cardMeta}>
+                    {project
+                      ? `${entry.date} → ${entry.endDate ?? entry.date}`
+                      : `${entry.missingClockIn ? "Missing Clock In" : displayTime(entry.startedAt)} → ${entry.endedAt ? displayTime(entry.endedAt) : "Unfinished"} · ${duration(workedMinutes(entry))}`}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.cardMeta,
+                      {
+                        color: status.startsWith("Paid")
+                          ? colors.accent
+                          : colors.warning,
+                      },
+                    ]}
+                  >
+                    {status}
+                    {job ? ` · ${job.name}` : ""}
+                  </Text>
+                  {selectionMode && (
+                    <Action
+                      title={
+                        selectedEligible.includes(entry.id)
+                          ? "✓ Selected"
+                          : "Select"
+                      }
+                      disabled={!eligibleEntry}
+                      onPress={() => toggleSelected(entry.id)}
+                    />
+                  )}
+                  {open && (
+                    <>
+                      <Text style={styles.cardMeta}>
+                        {project
+                          ? `Currency: ${entry.currency ?? "USD"}`
+                          : `Lunch: ${entry.lunchMinutes}m (${entry.lunchPaid ? "paid" : "unpaid"}) · Breaks: ${entry.breakMinutes}m${entry.breakLabel ? ` · ${entry.breakLabel}` : ""}`}
+                      </Text>
+                      {!project && (
+                        <Text style={styles.cardMeta}>
+                          Tips:{" "}
+                          {amount(
+                            entry.tips ?? 0,
+                            entry.currency ?? job?.currency ?? "USD",
+                          )}{" "}
+                          ·{" "}
+                          {entry.tipType === "paycheck"
+                            ? "On Paycheck"
+                            : (entry.tipType ?? "cash")}
+                        </Text>
+                      )}
+                      {entry.projectNotes && (
+                        <Text style={styles.cardMeta}>
+                          Notes: {entry.projectNotes}
+                        </Text>
+                      )}
+                      <Action
+                        title="Edit"
+                        onPress={() =>
+                          setForm({ id: entry.id, draft: draftForEntry(entry) })
+                        }
+                      />
+                      <Action
+                        title={entry.paid ? "Mark unpaid" : "Mark paid"}
+                        disabled={status === "Paid via Paycheck"}
+                        onPress={() => onPaid(entry.id)}
+                      />
+                      {!project &&
+                        !entry.missingClockIn &&
+                        !entry.endedAt &&
+                        entry.date === localDate() && (
+                          <Action
+                            title="Resume in Tracker"
+                            disabled={Boolean(activeShift)}
+                            onPress={() => onReactivate(entry.id)}
+                          />
+                        )}
+                      <Action
+                        title="Delete"
+                        onPress={() =>
+                          Alert.alert(
+                            "Delete entry?",
+                            "This entry will be removed from History.",
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              {
+                                text: "Delete",
+                                style: "destructive",
+                                onPress: () => onDelete(entry.id),
+                              },
+                            ],
+                          )
+                        }
+                      />
+                    </>
+                  )}
+                </View>
+              );
+            })}
+            <Action
+              title={
+                data.isPremium
+                  ? "Export filtered history (CSV)"
+                  : "Export CSV · Premium"
+              }
+              disabled={data.isPremium && !entries.length}
+              onPress={() => (data.isPremium ? onExport(entries) : onPremium())}
+            />
+            {!data.isPremium && (
+              <PaywallCard
+                title="Full History & Calendar"
+                description="Free includes this month’s history. Preview Premium for older entries, calendar views, summaries, and export."
+                onPress={onPremium}
+              />
+            )}
+          </>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
 }
-
-function duration(shift: Shift) {
-  if (!shift.endedAt) return "In progress";
-  const seconds = Math.max(0, Math.floor((Date.parse(shift.endedAt) - Date.parse(shift.startedAt)) / 1000) - shift.lunchMinutes * 60 - shift.breakMinutes * 60);
-  return `${Math.floor(seconds / 3600)}h ${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}m`;
+function displayTime(value: string) {
+  return timeValue(value)
+    ? new Date(value).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      })
+    : "—";
 }
-
-function inFilter(date: string, filter: Filter) {
-  if (filter === "all") return true;
-  const today = new Date();
-  const current = new Date(`${date}T12:00:00`);
-  if (filter === "month") return current.getFullYear() === today.getFullYear() && current.getMonth() === today.getMonth();
-  if (filter === "year") return current.getFullYear() === today.getFullYear();
-  if (filter === "custom") return false;
-  const monday = new Date(today);
-  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-  monday.setHours(0, 0, 0, 0);
-  if (filter === "lastWeek") { const lastMonday = new Date(monday); lastMonday.setDate(monday.getDate() - 7); const nextMonday = new Date(lastMonday); nextMonday.setDate(lastMonday.getDate() + 7); return current >= lastMonday && current < nextMonday; }
-  const nextMonday = new Date(monday);
-  nextMonday.setDate(monday.getDate() + 7);
-  return current >= monday && current < nextMonday;
-}
-
-export function HistoryScreen({ history, onPremium }: { history: Shift[]; onPremium: () => void }) {
-  const [filter, setFilter] = useState<Filter>("month");
-  const [earningsView, setEarningsView] = useState<EarningsView>("all");
-  const [customStart, setCustomStart] = useState(""); const [customEnd, setCustomEnd] = useState("");
-  const entries = useMemo(() => history.filter((shift) => filter === "custom" ? Boolean(customStart && customEnd && shift.date >= customStart && shift.date <= customEnd) : inFilter(shift.date, filter)), [history, filter, customEnd, customStart]);
-  const totalHours = entries.reduce((total, shift) => total + (shift.endedAt ? Math.max(0, (Date.parse(shift.endedAt) - Date.parse(shift.startedAt)) / 3_600_000 - shift.lunchMinutes / 60 - shift.breakMinutes / 60) : 0), 0);
-  const totalPay = entries.reduce((total, shift) => total + shift.earnings + (shift.tips ?? 0), 0);
-  const totalTips = entries.reduce((total, shift) => total + (shift.tips ?? 0), 0);
-  const displayedPay = earningsView === "tips" ? totalTips : earningsView === "net" ? totalPay * 0.9 : totalPay;
-
-  return <SafeAreaView style={styles.screen} edges={["top"]}><ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-    <View style={{ borderBottomColor: colors.border, borderBottomWidth: 1, paddingBottom: 18 }}><Text style={styles.title}>Work History</Text><Text style={styles.subtitle}>Review your shifts, time, and earnings.</Text></View>
-
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: 18 }}>{(["week", "lastWeek", "month", "year", "all", "custom"] as const).map((value) => <Pressable key={value} onPress={() => setFilter(value)} style={{ backgroundColor: filter === value ? `${colors.accent}24` : colors.surface, borderColor: filter === value ? colors.accent : colors.border, borderRadius: 18, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 9 }}><Text style={{ color: filter === value ? colors.accent : colors.muted, fontSize: 12, fontWeight: "800" }}>{value === "week" ? "This week" : value === "lastWeek" ? "Last week" : value === "month" ? "This month" : value === "year" ? "This year" : value === "custom" ? "Custom" : "All time"}</Text></Pressable>)}</ScrollView>
-    {filter === "custom" && <View style={[styles.card, { flexDirection: "row", gap: 10 }]}><View style={{ flex: 1 }}><Text style={styles.cardMeta}>FROM</Text><TextInput value={customStart} onChangeText={setCustomStart} placeholder="YYYY-MM-DD" placeholderTextColor={colors.muted} style={{ color: colors.text, backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1, borderRadius: 8, marginTop: 5, padding: 10 }} /></View><View style={{ flex: 1 }}><Text style={styles.cardMeta}>TO</Text><TextInput value={customEnd} onChangeText={setCustomEnd} placeholder="YYYY-MM-DD" placeholderTextColor={colors.muted} style={{ color: colors.text, backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1, borderRadius: 8, marginTop: 5, padding: 10 }} /></View></View>}
-
-    <View style={styles.card}><View style={{ alignItems: "center", flexDirection: "row", justifyContent: "space-between" }}><Text style={styles.cardMeta}>PERIOD SUMMARY</Text><View style={{ flexDirection: "row", gap: 8 }}>{(["all", "net", "tips"] as const).map((value) => <Pressable key={value} onPress={() => setEarningsView(value)}><Text style={{ color: earningsView === value ? colors.accent : colors.muted, fontSize: 11, fontWeight: "800" }}>{value.toUpperCase()}</Text></Pressable>)}</View></View><View style={{ flexDirection: "row", marginTop: 16 }}><View style={{ flex: 1 }}><Text style={{ color: colors.text, fontSize: 24, fontWeight: "900" }}>{totalHours.toFixed(1)}h</Text><Text style={styles.cardMeta}>Worked</Text></View><View style={{ flex: 1 }}><Text style={{ color: colors.accent, fontSize: 24, fontWeight: "900" }}>${displayedPay.toFixed(2)}</Text><Text style={styles.cardMeta}>{earningsView === "tips" ? "Tips" : earningsView === "net" ? "Est. net" : "Gross pay"}</Text></View><View style={{ flex: 1 }}><Text style={{ color: colors.text, fontSize: 24, fontWeight: "900" }}>{entries.length}</Text><Text style={styles.cardMeta}>Shifts</Text></View></View><Text style={[styles.cardMeta, { marginTop: 12 }]}>Tips: ${totalTips.toFixed(2)} · Estimated deductions: ${(totalPay * 0.1).toFixed(2)}</Text></View>
-
-    <View style={{ marginTop: 22 }}><Text style={styles.cardTitle}>Entries</Text><Text style={styles.cardMeta}>{entries.length ? `${entries.length} completed ${entries.length === 1 ? "shift" : "shifts"}` : "No entries for this period"}</Text></View>
-    {entries.length === 0 ? <View style={[styles.card, { alignItems: "center", paddingVertical: 28 }]}><Text style={{ color: colors.accent, fontSize: 28 }}>◷</Text><Text style={[styles.cardTitle, { marginTop: 12 }]}>No completed shifts yet</Text><Text style={[styles.cardMeta, { textAlign: "center" }]}>Your completed shifts will appear here after you clock out.</Text></View> : entries.map((shift) => <View key={shift.id} style={styles.card}><View style={{ flexDirection: "row", justifyContent: "space-between" }}><View><Text style={styles.cardTitle}>{formatDate(shift.date)}</Text><Text style={styles.cardMeta}>{duration(shift)}</Text></View><Text style={{ color: colors.accent, fontSize: 20, fontWeight: "900" }}>${shift.earnings.toFixed(2)}</Text></View><View style={{ borderTopColor: colors.border, borderTopWidth: 1, flexDirection: "row", marginTop: 14, paddingTop: 12 }}><Text style={[styles.cardMeta, { flex: 1 }]}>{new Date(shift.startedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</Text><Text style={[styles.cardMeta, { flex: 1, textAlign: "center" }]}>{shift.lunchMinutes ? `${shift.lunchMinutes}m lunch` : "No lunch"}</Text><Text style={[styles.cardMeta, { flex: 1, textAlign: "right" }]}>{shift.endedAt ? new Date(shift.endedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "Active"}</Text></View></View>)}
-
-    <PaywallCard onPress={onPremium} title="Go further with insights" description="Premium unlocks trends, pay calendar, CSV export, and longer history." />
-  </ScrollView></SafeAreaView>;
+function liveDuration(minutes: number) {
+  const seconds = Math.floor(minutes * 60);
+  return `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }

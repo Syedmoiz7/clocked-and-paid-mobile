@@ -42,7 +42,7 @@ export function TimePickerField({ label, value, onChange, placeholder = "Choose 
       <Text style={{ color: value ? colors.text : colors.muted, fontFamily: value ? "monospace" : undefined }}>{value ? displayValue(value) : placeholder}</Text>
     </Pressable>
     {open && draft && <View style={{ backgroundColor: colors.surfaceRaised, borderColor: colors.border, borderRadius: 12, borderWidth: 1, marginTop: 6, overflow: "hidden" }}>
-      <DateTimePicker value={draft} mode="time" display="spinner" is24Hour={false} onChange={(event: DateTimePickerEvent, selectedDate?: Date) => { if (event.type === "dismissed") close(); else if (selectedDate) setDraft(selectedDate); }} />
+      <DateTimePicker value={draft} mode="time" display="spinner" themeVariant="dark" textColor={colors.text} is24Hour={false} onChange={(event: DateTimePickerEvent, selectedDate?: Date) => { if (event.type === "dismissed") close(); else if (selectedDate) setDraft(selectedDate); }} />
       <Pressable onPress={commit} style={[styles.button, { borderRadius: 0, minHeight: 44 }]}><Text style={styles.buttonText}>Done</Text></Pressable>
     </View>}
   </View>;

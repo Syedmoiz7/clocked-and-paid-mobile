@@ -9,14 +9,32 @@ export type Shift = {
   breakMinutes: number;
   earnings: number;
   tips?: number;
-  tipType?: "cash" | "card" | "other" | null;
+  tipType?: "cash" | "paycheck" | "card" | "other" | null;
+  missingClockIn?: boolean;
+  historyLunchStart?: string | null;
+  historyLunchEnd?: string | null;
+  breaks?: { id: string; start: string; end: string | null; label?: string }[];
   jobId?: string | null;
   breakLabel?: string | null;
   lunchStartedAt?: string | null;
   breakStartedAt?: string | null;
+  entryType?: "shift" | "project";
+  projectName?: string | null;
+  endDate?: string | null;
+  flatAmount?: number | null;
+  currency?: string | null;
+  projectNotes?: string | null;
+  customRate?: number | null;
+  lunchPaid?: boolean;
+  paid?: boolean;
+  paidAt?: string | null;
 };
 
-export type MockJob = { id: string; name: string; hourlyRate: number; color: string };
+export type Deduction = { id: string; label: string; amount: number; frequency: "daily" | "weekly" | "per-pay-period" | "monthly" | "yearly" | "one-time"; enabled: boolean; jobId?: string | null; isPercentage?: boolean };
+
+export type MockJob = { id: string; name: string; hourlyRate: number; color: string; currency?: string; payFrequency?: "weekly" | "biweekly" | "semi-monthly" | "monthly"; payPeriodStart?: string };
+
+export type MockPaycheck = { id: string; jobId: string; startDate: string; endDate: string; paid: boolean };
 
 export type TodayPlan = {
   plannedHours: number;
@@ -58,4 +76,7 @@ export type AppState = {
   notificationPromptDismissed: boolean;
   scheduledLunchReminderId: string | null;
   scheduledReturnReminderId: string | null;
+  deductions: Deduction[];
+  paychecks: MockPaycheck[];
+  payVisible: boolean;
 };
