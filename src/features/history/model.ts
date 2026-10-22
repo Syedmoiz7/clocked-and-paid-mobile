@@ -5,6 +5,8 @@ import type {
   Shift,
   TodayPlan,
 } from "../../types";
+import { localDate, validDate } from "../../utils/dateOnly";
+export { localDate, validDate } from "../../utils/dateOnly";
 export const currencies = [
   "USD",
   "CAD",
@@ -52,16 +54,6 @@ export type EntryDraft = {
   tipType: NonNullable<Shift["tipType"]>;
   customRate: string;
 };
-export function localDate(date = new Date()) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-export function validDate(value: string) {
-  return (
-    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
-    Number.isFinite(new Date(`${value}T12:00:00`).getTime()) &&
-    localDate(new Date(`${value}T12:00:00`)) === value
-  );
-}
 export function timeValue(value?: string | null) {
   if (!value) return "";
   const date = new Date(value);
@@ -160,9 +152,15 @@ export function wagesFor(
 ) {
   if (shift.entryType === "project") return shift.flatAmount ?? shift.earnings;
   const minutes = workedMinutes(shift, now);
-  const regular = Math.min(minutes, plan.overtimeThreshold * 60);
+  const job = jobs.find((job) => job.id === shift.jobId);
+  const regular = Math.min(
+    minutes,
+    (job?.overtimeThreshold ?? plan.overtimeThreshold) * 60,
+  );
   return (
-    ((regular + Math.max(0, minutes - regular) * plan.overtimeMultiplier) /
+    ((regular +
+      Math.max(0, minutes - regular) *
+        (job?.overtimeMultiplier ?? plan.overtimeMultiplier)) /
       60) *
     rateFor(shift, jobs, plan)
   );
@@ -200,7 +198,10 @@ export function prepareEntry(
     projectNotes: draft.notes.trim() || null,
     paid: draft.paid,
     paidAt: draft.paid ? (existing?.paidAt ?? new Date().toISOString()) : null,
-    currency: draft.currency,
+    currency:
+      draft.entryType === "project"
+        ? draft.currency
+        : (jobs.find((job) => job.id === draft.jobId)?.currency ?? "USD"),
   };
   if (!currencies.includes(draft.currency))
     return fail("Choose a supported currency.");

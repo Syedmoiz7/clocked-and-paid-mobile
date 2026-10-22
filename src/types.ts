@@ -28,13 +28,69 @@ export type Shift = {
   lunchPaid?: boolean;
   paid?: boolean;
   paidAt?: string | null;
+  paidByPaycheckId?: string | null;
 };
 
-export type Deduction = { id: string; label: string; amount: number; frequency: "daily" | "weekly" | "per-pay-period" | "monthly" | "yearly" | "one-time"; enabled: boolean; jobId?: string | null; isPercentage?: boolean };
+export type Deduction = {
+  id: string;
+  label: string;
+  amount: number;
+  frequency:
+    "daily" | "weekly" | "per-pay-period" | "monthly" | "yearly" | "one-time";
+  enabled: boolean;
+  jobId?: string | null;
+  isPercentage?: boolean;
+  beforeTax?: boolean;
+  taxSetAside?: boolean;
+  applicableFromDate?: string;
+  applicableToDate?: string;
+  payDate?: string;
+  notes?: string;
+  consumedByPaycheckId?: string;
+};
 
-export type MockJob = { id: string; name: string; hourlyRate: number; color: string; currency?: string; payFrequency?: "weekly" | "biweekly" | "semi-monthly" | "monthly"; payPeriodStart?: string };
+export type MockJob = {
+  id: string;
+  name: string;
+  hourlyRate: number;
+  color: string;
+  currency?: string;
+  payFrequency?: "weekly" | "biweekly" | "semi-monthly" | "monthly";
+  payPeriodStart?: string;
+  payPeriodEnd?: string;
+  nextPayDate?: string;
+  payDelayDays?: number;
+  overtimeThreshold?: number;
+  overtimeMultiplier?: number;
+};
 
-export type MockPaycheck = { id: string; jobId: string; startDate: string; endDate: string; paid: boolean };
+export type MockPaycheck = {
+  id: string;
+  jobId: string;
+  startDate: string;
+  endDate: string;
+  paid: boolean;
+  payDate?: string;
+  grossPay?: number;
+  totalDeductions?: number;
+  netPay?: number;
+  hoursWorked?: number;
+  shiftCount?: number;
+  notes?: string;
+  currency?: string;
+  createdAt?: string;
+};
+
+export type PayFrequency = NonNullable<MockJob["payFrequency"]>;
+export type PaySchedule = {
+  frequency: PayFrequency;
+  periodStart: string;
+  periodEnd: string;
+  payDate: string;
+  payDelayDays: number;
+  anchorDate?: string;
+  customPeriod?: boolean;
+};
 
 export type TodayPlan = {
   plannedHours: number;
@@ -79,4 +135,5 @@ export type AppState = {
   deductions: Deduction[];
   paychecks: MockPaycheck[];
   payVisible: boolean;
+  paySchedules: Record<string, PaySchedule>;
 };
