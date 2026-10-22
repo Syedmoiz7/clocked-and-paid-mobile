@@ -72,7 +72,7 @@ target 'ClockedPaid' do
     # Expo's generated expo-constants script uses an unquoted PROJECT_DIR.
     # Quote it so builds continue to work when the project path contains
     # spaces or shell metacharacters, such as "Clocked & Paid".
-    constants_script = File.expand_path('../node_modules/expo/node_modules/expo-constants/scripts/get-app-config-ios.sh', __dir__)
+    constants_script = File.expand_path('../node_modules/expo-constants/scripts/get-app-config-ios.sh', __dir__)
     if File.file?(constants_script)
       script = File.read(constants_script)
       patched_script = script.gsub('basename $PROJECT_DIR', 'basename "$PROJECT_DIR"')

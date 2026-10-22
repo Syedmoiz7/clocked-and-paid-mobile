@@ -16,9 +16,9 @@ export function PaywallCard({ title, description, onPress }: Props) {
       <Text style={styles.subtitle}>{description}</Text>
       <Pressable
         onPress={onPress}
-        style={[styles.button, { marginTop: 16, backgroundColor: colors.text }]}
+        style={[styles.button, { marginTop: 16, backgroundColor: colors.accent, borderColor: colors.accent, borderWidth: 1 }]}
       >
-        <Text style={styles.buttonText}>See plans</Text>
+        <Text style={[styles.buttonText, { color: "#fff7fa" }]}>See plans</Text>
       </Pressable>
     </View>
   );

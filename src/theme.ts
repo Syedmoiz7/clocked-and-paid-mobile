@@ -1,16 +1,17 @@
 import { StyleSheet } from "react-native";
 
 export const colors = {
-  background: "#0d1011",
-  surface: "#171b1d",
-  surfaceRaised: "#202628",
-  border: "#2d3739",
-  text: "#f3f6f5",
-  muted: "#9ba8a5",
-  accent: "#52c7a5",
-  accentSoft: "#153d35",
-  warning: "#f0b969",
-  danger: "#ee7d7d",
+  background: "#100a0d",
+  surface: "#171013",
+  surfaceRaised: "#21151a",
+  border: "#2b1c23",
+  text: "#f1e7eb",
+  muted: "#9a858f",
+  accent: "#d65c90",
+  accentSoft: "#351828",
+  warning: "#e8ae5a",
+  danger: "#df696d",
+  blue: "#6ab6d1",
 };
 
 export const styles = StyleSheet.create({
@@ -23,7 +24,7 @@ export const styles = StyleSheet.create({
   cardTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
   cardMeta: { color: colors.muted, fontSize: 13, marginTop: 5 },
   button: { alignItems: "center", backgroundColor: colors.accent, borderRadius: 16, minHeight: 54, justifyContent: "center", paddingHorizontal: 18 },
-  buttonText: { color: "#071312", fontSize: 16, fontWeight: "800" },
+  buttonText: { color: "#fff7fa", fontSize: 16, fontWeight: "800" },
   secondaryButton: { alignItems: "center", borderColor: colors.border, borderRadius: 14, borderWidth: 1, minHeight: 48, justifyContent: "center", paddingHorizontal: 16 },
   secondaryButtonText: { color: colors.text, fontSize: 15, fontWeight: "700" },
 });
