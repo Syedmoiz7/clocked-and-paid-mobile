@@ -57,7 +57,15 @@ export function reconcileJobNotifications(
       const pending = await Notifications.getAllScheduledNotificationsAsync();
       await Promise.all(
         pending
-          .filter((item) => item.content.data?.managedJobReminder === true)
+          .filter(
+            (item) =>
+              item.content.data?.managedJobReminder === true ||
+              [
+                "Lunch reminder",
+                "Return to work",
+                "Clocked & Paid reminder",
+              ].includes(item.content.title ?? ""),
+          )
           .map((item) => cancelReminder(item.identifier)),
       );
       for (const item of items) {

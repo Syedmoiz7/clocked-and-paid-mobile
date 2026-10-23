@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { AppState, Shift } from "../types";
-import { colors, styles } from "../theme";
+import { useThemeTokens } from "../providers/ThemeProvider";
+import { useClockFormat } from "../features/settings/useClockFormat";
 import {
   Action,
   Choices,
@@ -24,7 +25,6 @@ import {
   paymentStatus,
   periodDeductions,
   selectable,
-  timeValue,
   validDate,
   wagesFor,
   workedMinutes,
@@ -67,13 +67,15 @@ export function HistoryScreen({
   onPremium,
   onEndPreview,
 }: Props) {
+  const { colors, styles } = useThemeTokens();
+  const { timeLabel: displayTime } = useClockFormat();
   const {
     history,
     activeShift,
     jobs,
     paychecks,
     deductions,
-    todayPlan: plan,
+    defaultPlan: plan,
     payVisible,
   } = data;
   const [filters, setFilters] = useState(defaultFilters);
@@ -104,7 +106,9 @@ export function HistoryScreen({
     .map((entry) => entry.id);
   const selectedEligible = selected.filter((id) => eligible.includes(id));
   const liveMinutes = activeShift ? workedMinutes(activeShift, now) : 0;
-  const livePay = activeShift ? wagesFor(activeShift, jobs, plan, now) : 0;
+  const livePay = activeShift
+    ? wagesFor(activeShift, jobs, data.todayPlan, now)
+    : 0;
   const minutes =
     entries.reduce((sum, entry) => sum + workedMinutes(entry), 0) + liveMinutes;
   const wages =
@@ -124,7 +128,8 @@ export function HistoryScreen({
         ? gross - (filters.excludeDeductions ? 0 : deductionsTotal)
         : gross;
   const currency =
-    jobs.find((job) => job.id === filters.jobId)?.currency ?? "USD";
+    jobs.find((job) => job.id === filters.jobId)?.currency ??
+    data.preferences.currency;
   const amount = (value: number, code = currency) =>
     payVisible ? money(value, code) : "•••••";
   const activeFilterCount = [
@@ -432,7 +437,7 @@ export function HistoryScreen({
                   {amount(
                     livePay,
                     jobs.find((job) => job.id === activeShift.jobId)
-                      ?.currency ?? "USD",
+                      ?.currency ?? data.preferences.currency,
                   )}{" "}
                   accruing
                 </Text>
@@ -503,7 +508,9 @@ export function HistoryScreen({
                     {amount(
                       wagesFor(entry, jobs, plan) +
                         (project ? 0 : (entry.tips ?? 0)),
-                      entry.currency ?? job?.currency ?? "USD",
+                      entry.currency ??
+                        job?.currency ??
+                        data.preferences.currency,
                     )}
                   </Text>
                   <Text style={styles.cardMeta}>
@@ -539,7 +546,7 @@ export function HistoryScreen({
                     <>
                       <Text style={styles.cardMeta}>
                         {project
-                          ? `Currency: ${entry.currency ?? "USD"}`
+                          ? `Currency: ${entry.currency ?? data.preferences.currency}`
                           : `Lunch: ${entry.lunchMinutes}m (${entry.lunchPaid ? "paid" : "unpaid"}) · Breaks: ${entry.breakMinutes}m${entry.breakLabel ? ` · ${entry.breakLabel}` : ""}`}
                       </Text>
                       {!project && (
@@ -547,7 +554,9 @@ export function HistoryScreen({
                           Tips:{" "}
                           {amount(
                             entry.tips ?? 0,
-                            entry.currency ?? job?.currency ?? "USD",
+                            entry.currency ??
+                              job?.currency ??
+                              data.preferences.currency,
                           )}{" "}
                           ·{" "}
                           {entry.tipType === "paycheck"
@@ -624,15 +633,6 @@ export function HistoryScreen({
       </ScrollView>
     </SafeAreaView>
   );
-}
-function displayTime(value: string) {
-  return timeValue(value)
-    ? new Date(value).toLocaleTimeString([], {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      })
-    : "—";
 }
 function liveDuration(minutes: number) {
   const seconds = Math.floor(minutes * 60);

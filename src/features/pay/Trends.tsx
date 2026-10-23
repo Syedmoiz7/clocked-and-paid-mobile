@@ -1,6 +1,6 @@
 import { ScrollView, Text, View } from "react-native";
 import type { AppState } from "../../types";
-import { colors, styles } from "../../theme";
+import { useThemeTokens } from "../../providers/ThemeProvider";
 import { duration, money, localDate } from "../history/model";
 import { payPeriod } from "../history/payPeriods";
 import {
@@ -25,6 +25,7 @@ function Bars({
   data: AppState;
   currency: string;
 }) {
+  const { colors, styles } = useThemeTokens();
   const max = Math.max(1, ...rows.map((row) => row[kind]));
   return (
     <View style={{ marginTop: 15 }}>
@@ -79,6 +80,7 @@ export function PayTrends({
   jobId: string | null;
   currency: string;
 }) {
+  const { colors, styles } = useThemeTokens();
   const entries = periodEntries(data, bounds, jobId, currency);
   const dates = new Map<
     string,
@@ -172,6 +174,7 @@ export function Progress({
   jobId: string | null;
   currency: string;
 }) {
+  const { colors, styles } = useThemeTokens();
   const summary = financialSummary(
     data,
     bounds,

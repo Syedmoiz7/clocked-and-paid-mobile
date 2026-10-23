@@ -107,6 +107,19 @@ export function validateJob(job: MockJob): string | null {
   const settings = job.reminderSettings;
   if (!settings) return null;
   if (
+    !["off", "relative", "fixed"].includes(settings.lunchMode) ||
+    !Array.isArray(settings.custom)
+  )
+    return "Invalid reminder mode or custom reminder list.";
+  for (const key of [
+    "returnReminder",
+    "sound",
+    "indicator",
+    "overlay",
+  ] as const)
+    if (typeof settings[key] !== "boolean")
+      return "Invalid reminder effect flag.";
+  if (
     settings.lunchMode === "relative" &&
     (!Number.isFinite(settings.lunchHours) ||
       settings.lunchHours < 0.5 ||
@@ -139,7 +152,19 @@ export function validTime(value: string) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 export function validateReminder(reminder: CustomReminder): string | null {
-  if (!reminder.name.trim()) return "Reminder name is required.";
+  if (!reminder || typeof reminder.name !== "string" || !reminder.name.trim())
+    return "Reminder name is required.";
+  if (
+    typeof reminder.id !== "string" ||
+    !reminder.id ||
+    !["after-clock-in", "after-lunch-start", "at-time"].includes(
+      reminder.trigger,
+    ) ||
+    !["low", "medium", "high"].includes(reminder.priority) ||
+    typeof reminder.enabled !== "boolean" ||
+    typeof reminder.message !== "string"
+  )
+    return "Invalid reminder trigger, identity or priority.";
   if (
     reminder.trigger === "at-time"
       ? !validTime(reminder.atTime)

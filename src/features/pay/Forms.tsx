@@ -7,7 +7,7 @@ import {
   Field,
   Toggle,
 } from "../../components/FormControls";
-import { styles, colors } from "../../theme";
+import { useThemeTokens } from "../../providers/ThemeProvider";
 import type {
   AppState,
   Deduction,
@@ -31,6 +31,7 @@ import {
 import { addDays } from "../history/payPeriods";
 
 export function ErrorText({ error }: { error: string | null }) {
+  const { colors, styles } = useThemeTokens();
   return error ? (
     <Text
       accessibilityRole="alert"
@@ -51,6 +52,7 @@ export function ScheduleForm({
   onSave: (schedule: PaySchedule, applyToJob: boolean) => void;
   onCancel: () => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   const [draft, setDraft] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [applyToJob, setApplyToJob] = useState(Boolean(jobId));
@@ -148,6 +150,7 @@ export function DeductionForm({
   onSave: (deduction: Deduction) => void;
   onCancel: () => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   const [draft, setDraft] = useState<Deduction>(
     initial ?? {
       id: `deduction-${Date.now()}`,
@@ -176,7 +179,8 @@ export function DeductionForm({
     setDraft((value) => ({ ...value, ...changes }));
   };
   const currency =
-    data.jobs.find((job) => job.id === draft.jobId)?.currency ?? "USD";
+    data.jobs.find((job) => job.id === draft.jobId)?.currency ??
+    data.preferences.currency;
   const boundedEntries =
     draft.applicableFromDate && draft.applicableToDate
       ? periodEntries(
@@ -338,6 +342,7 @@ export function ReceiptForm({
   onSave: (record: MockPaycheck, markShifts: boolean) => string | null;
   onCancel: () => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   const estimate = paycheckDraft(data, jobId, initialBounds);
   const [bounds, setBounds] = useState(initialBounds);
   const [date, setDate] = useState(() => {
@@ -349,7 +354,9 @@ export function ReceiptForm({
   const [notes, setNotes] = useState("");
   const [markShifts, setMarkShifts] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const currency = data.jobs.find((job) => job.id === jobId)?.currency ?? "USD";
+  const currency =
+    data.jobs.find((job) => job.id === jobId)?.currency ??
+    data.preferences.currency;
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Paycheck Received</Text>

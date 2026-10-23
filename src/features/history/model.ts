@@ -174,6 +174,7 @@ export function prepareEntry(
   jobs: MockJob[],
   plan: TodayPlan,
   existing?: Shift,
+  defaultCurrency = "USD",
 ):
   | {
       ok: true;
@@ -201,7 +202,9 @@ export function prepareEntry(
     currency:
       draft.entryType === "project"
         ? draft.currency
-        : (jobs.find((job) => job.id === draft.jobId)?.currency ?? "USD"),
+        : ((existing?.jobId === draft.jobId ? existing?.currency : undefined) ??
+          jobs.find((job) => job.id === draft.jobId)?.currency ??
+          defaultCurrency),
   };
   if (!currencies.includes(draft.currency))
     return fail("Choose a supported currency.");
@@ -456,18 +459,28 @@ export function money(amount: number, currency = "USD") {
 export function duration(minutes: number) {
   return `${Math.floor(minutes / 60)}h ${Math.floor(minutes % 60)}m`;
 }
-export function csvFor(entries: Shift[], jobs: MockJob[], plan: TodayPlan) {
-  const cell = (value: unknown) =>
-    `"${String(value ?? "").replaceAll('"', '""')}"`;
+export function csvFor(
+  entries: Shift[],
+  jobs: MockJob[],
+  plan: TodayPlan,
+  defaultCurrency = "USD",
+) {
+  const cell = (value: unknown) => {
+    const text = String(value ?? "");
+    const safe = /^[=+@-]/.test(text) ? `'${text}` : text;
+    return `"${safe.replaceAll('"', '""')}"`;
+  };
   return [
-    "date,type,project,end_date,currency,job,clock_in,clock_out,worked_minutes,wages,tips,paid,notes",
+    "date,type,project,end_date,currency,job,clock_in,clock_out,worked_minutes,wages,tips,paid,notes,id,job_id,tip_type,lunch_minutes,break_minutes,custom_rate",
     ...entries.map((entry) =>
       [
         entry.date,
         entry.entryType ?? "shift",
         entry.projectName,
         entry.endDate,
-        entry.currency ?? "USD",
+        entry.currency ??
+          jobs.find((job) => job.id === entry.jobId)?.currency ??
+          defaultCurrency,
         jobs.find((job) => job.id === entry.jobId)?.name,
         entry.missingClockIn || entry.entryType === "project"
           ? ""
@@ -478,6 +491,12 @@ export function csvFor(entries: Shift[], jobs: MockJob[], plan: TodayPlan) {
         entry.tips ?? 0,
         entry.paid ? "yes" : "no",
         entry.projectNotes,
+        entry.id,
+        entry.jobId,
+        entry.tipType,
+        entry.lunchMinutes,
+        entry.breakMinutes,
+        entry.customRate,
       ]
         .map(cell)
         .join(","),

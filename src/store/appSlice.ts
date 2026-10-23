@@ -8,7 +8,15 @@ import type {
   MockPaycheck,
   PaySchedule,
   MockJob,
+  MockAccount,
 } from "../types";
+import {
+  preferenceDefaults,
+  validateSettings,
+  type SettingsDraft,
+} from "../features/settings/model";
+import { applyImport, type ImportData } from "../features/settings/backup";
+import { localDate } from "../utils/dateOnly";
 import {
   jobEditError,
   jobPlan,
@@ -20,8 +28,8 @@ import {
 function applyJobDefaults(state: AppState, job: MockJob) {
   state.selectedJobId = job.id;
   state.todayPlan = jobPlan(job, state.defaultPlan);
-  if (job.reminderSettings) {
-    const settings = job.reminderSettings;
+  {
+    const settings = job.reminderSettings ?? state.preferences.defaultReminders;
     state.reminders = {
       ...state.reminders,
       lunchReminder: settings.lunchMode !== "off",
@@ -35,6 +43,8 @@ function applyJobDefaults(state: AppState, job: MockJob) {
 }
 
 export const initialAppState: AppState = {
+  preferences: preferenceDefaults(),
+  account: { mode: "guest", name: "", email: "" },
   activeShift: null,
   extraShifts: [],
   history: [],
@@ -90,7 +100,7 @@ export const initialAppState: AppState = {
   scheduledReturnReminderId: null,
   deductions: [],
   paychecks: [],
-  payVisible: true,
+  payVisible: false,
   paySchedules: {},
   jobReminderAcknowledgements: {},
 };
@@ -99,6 +109,64 @@ const appSlice = createSlice({
   name: "app",
   initialState: initialAppState,
   reducers: {
+    saveSettings: (state, action: PayloadAction<SettingsDraft>) => {
+      if (validateSettings(action.payload)) return;
+      const { preferences, plan, breakIncluded } = action.payload;
+      const privacyChanged =
+        preferences.payHiddenByDefault !== state.preferences.payHiddenByDefault;
+      state.preferences = preferences;
+      state.defaultPlan = plan;
+      state.hourlyRate = plan.hourlyRate;
+      state.breakIncludedInRemaining = breakIncluded;
+      if (privacyChanged) state.payVisible = !preferences.payHiddenByDefault;
+      if (!state.activeShift) {
+        const job = state.jobs.find((item) => item.id === state.selectedJobId);
+        state.todayPlan = job ? jobPlan(job, plan) : plan;
+      } else state.todayPlan.timerDirection = plan.timerDirection;
+      const settings =
+        state.jobs.find((item) => item.id === state.selectedJobId)
+          ?.reminderSettings ?? preferences.defaultReminders;
+      state.reminders = {
+        ...state.reminders,
+        lunchReminder: settings.lunchMode !== "off",
+        returnReminder: settings.returnReminder,
+        reminderSound: settings.sound,
+        reminderOverlay: settings.overlay,
+        reminderTabFlash: settings.indicator,
+        reminderSnoozeMinutes: settings.snoozeMinutes,
+      };
+    },
+    setThemeHue: (state, action: PayloadAction<number>) => {
+      const draft = {
+        preferences: { ...state.preferences, themeHue: action.payload },
+        plan: state.defaultPlan,
+        breakIncluded: state.breakIncludedInRemaining,
+      };
+      if (!validateSettings(draft)) state.preferences.themeHue = action.payload;
+    },
+    setMockAccount: (state, action: PayloadAction<MockAccount>) => {
+      state.account = action.payload;
+    },
+    restoreData: (
+      state,
+      action: PayloadAction<{
+        imported: ImportData;
+        mode: "merge" | "replace";
+        includeSettings: boolean;
+      }>,
+    ) => {
+      return applyImport(
+        state,
+        action.payload.imported,
+        action.payload.mode,
+        action.payload.includeSettings,
+      );
+    },
+    resetLocalData: (state) => ({
+      ...initialAppState,
+      isPremium: state.isPremium,
+      account: state.account,
+    }),
     hydrate: (_state, action: PayloadAction<Partial<AppState>>) => {
       const savedJobs = action.payload.jobs;
       const hasLegacyPlaceholderJobs = savedJobs?.some(
@@ -122,12 +190,28 @@ const appSlice = createSlice({
       const savedActiveShift = action.payload.activeShift ?? null;
       const isOrphaned = Boolean(
         savedActiveShift &&
-        savedActiveShift.date !== new Date().toISOString().slice(0, 10) &&
+        savedActiveShift.date !== localDate(new Date()) &&
         !savedActiveShift.endedAt,
       );
       return {
         ...initialAppState,
         ...action.payload,
+        payVisible:
+          action.payload.payVisible ??
+          (action.payload.preferences
+            ? !action.payload.preferences.payHiddenByDefault
+            : true),
+        preferences: {
+          ...preferenceDefaults(),
+          payHiddenByDefault:
+            action.payload.preferences?.payHiddenByDefault ?? false,
+          ...action.payload.preferences,
+          defaultReminders: {
+            ...preferenceDefaults().defaultReminders,
+            ...action.payload.preferences?.defaultReminders,
+          },
+        },
+        account: { ...initialAppState.account, ...action.payload.account },
         activeShift: isOrphaned ? null : savedActiveShift,
         extraShifts: action.payload.extraShifts ?? [],
         orphanedShift: isOrphaned
@@ -153,6 +237,14 @@ const appSlice = createSlice({
       state.activeShift = action.payload;
     },
     startExtraShift: (state, action: PayloadAction<Shift>) => {
+      if (
+        !state.isPremium ||
+        !state.preferences.allowConcurrentShifts ||
+        !state.activeShift ||
+        action.payload.jobId === state.activeShift.jobId ||
+        state.extraShifts.some((shift) => shift.jobId === action.payload.jobId)
+      )
+        return;
       state.extraShifts.push(action.payload);
     },
     clockOutExtraShift: (state, action: PayloadAction<Shift>) => {
@@ -546,6 +638,11 @@ const appSlice = createSlice({
 });
 
 export const {
+  saveSettings,
+  setThemeHue,
+  setMockAccount,
+  restoreData,
+  resetLocalData,
   hydrate,
   clockIn,
   startExtraShift,

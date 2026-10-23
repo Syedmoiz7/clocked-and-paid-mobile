@@ -6,6 +6,9 @@ export type Entitlements = {
   jobLimit: number;
   multipleSimultaneousJobs: boolean;
   deductionsManager: boolean;
+  backupRestore: boolean;
+  recoveryTools: boolean;
+  fullThemePalette: boolean;
 };
 // Backend subscription data will replace this adapter; local preview is not billing verification.
 export function entitlementsFor(
@@ -17,5 +20,8 @@ export function entitlementsFor(
     jobLimit: data.isPremium ? Infinity : 1,
     multipleSimultaneousJobs: data.isPremium,
     deductionsManager: data.isPremium,
+    backupRestore: data.isPremium,
+    recoveryTools: data.isPremium,
+    fullThemePalette: data.isPremium,
   };
 }

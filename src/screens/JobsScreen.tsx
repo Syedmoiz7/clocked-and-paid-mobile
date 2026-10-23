@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { AppState, Deduction, MockJob } from "../types";
-import { colors, styles } from "../theme";
+import { useThemeTokens } from "../providers/ThemeProvider";
 import { Action, Toggle } from "../components/FormControls";
 import { JobForm } from "../features/jobs/JobForm";
 import { jobEditError, jobReferenced, newJob } from "../features/jobs/model";
@@ -28,6 +28,7 @@ export function JobsScreen({
   onDeleteDeduction,
   onPremium,
 }: Props) {
+  const { colors, styles } = useThemeTokens();
   const [editing, setEditing] = useState<MockJob | null>(null);
   const scroll = useRef<ScrollView>(null);
   useEffect(() => {

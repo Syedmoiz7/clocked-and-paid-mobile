@@ -30,7 +30,13 @@ export default function HistoryRoute() {
       : undefined;
     if (id && !existing)
       return "This entry no longer exists. Close the form and try again.";
-    const result = prepareEntry(draft, data.jobs, data.todayPlan, existing);
+    const result = prepareEntry(
+      draft,
+      data.jobs,
+      data.defaultPlan,
+      existing,
+      data.preferences.currency,
+    );
     if (!result.ok) return result.error;
     dispatch(
       id
@@ -89,7 +95,12 @@ export default function HistoryRoute() {
       }}
       onExport={(entries) => {
         void Share.share({
-          message: csvFor(entries, data.jobs, data.todayPlan),
+          message: csvFor(
+            entries,
+            data.jobs,
+            data.defaultPlan,
+            data.preferences.currency,
+          ),
           title: "Clocked & Paid History.csv",
         }).catch(() =>
           Alert.alert("Could not share history", "Please try again."),

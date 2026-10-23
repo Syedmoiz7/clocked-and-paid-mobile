@@ -4,7 +4,7 @@ import type { AppState, PaySchedule } from "../../types";
 import { Action, Choices, Field, Toggle } from "../../components/FormControls";
 import { duration, localDate, money } from "../history/model";
 import { payPeriod } from "../history/payPeriods";
-import { styles, colors } from "../../theme";
+import { useThemeTokens } from "../../providers/ThemeProvider";
 import { ErrorText, ScheduleForm } from "./Forms";
 import {
   estimateDeductions,
@@ -28,6 +28,7 @@ export function Estimator({
     applyToJob: boolean,
   ) => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   const [scope, setScope] = useState("__all__");
   const [editing, setEditing] = useState(false);
   const [preferConfigured, setPreferConfigured] = useState(false);

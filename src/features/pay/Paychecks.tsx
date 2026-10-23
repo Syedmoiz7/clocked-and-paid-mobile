@@ -5,7 +5,7 @@ import type { AppState, MockPaycheck, PaySchedule } from "../../types";
 import { Action, Choices } from "../../components/FormControls";
 import { localDate, money, selectable } from "../history/model";
 import { addDays, payPeriod } from "../history/payPeriods";
-import { styles } from "../../theme";
+import { useThemeTokens } from "../../providers/ThemeProvider";
 import { paycheckDraft, scheduleFor, type Bounds } from "./model";
 import { ReceiptForm, ScheduleForm } from "./Forms";
 
@@ -26,6 +26,7 @@ export function Paychecks({
     applyToJob: boolean,
   ) => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   const [receipt, setReceipt] = useState<{
     jobId: string;
     bounds: Bounds;

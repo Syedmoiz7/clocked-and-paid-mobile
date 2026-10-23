@@ -1,7 +1,8 @@
 import { Text, View } from "react-native";
-import { colors } from "../theme";
+import { useThemeTokens } from "../providers/ThemeProvider";
 
 export function AppLoading() {
+  const { colors, styles } = useThemeTokens();
   return (
     <View
       style={{

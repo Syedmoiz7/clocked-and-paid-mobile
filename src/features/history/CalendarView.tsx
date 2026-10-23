@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Text, View } from "react-native";
 import type { AppState, Shift } from "../../types";
-import { colors, styles } from "../../theme";
+import { useThemeTokens } from "../../providers/ThemeProvider";
 import { Action, Choices, DateField } from "./EntryForm";
 import {
   duration,
@@ -29,6 +29,7 @@ export function CalendarView({
   data: AppState;
   onEdit: (entry: Shift) => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   const [mode, setMode] = useState<Mode>("monthly");
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth());
@@ -41,14 +42,16 @@ export function CalendarView({
     (entry) =>
       entry.id !== data.activeShift?.id && (!jobId || entry.jobId === jobId),
   );
-  const currency = data.jobs.find((job) => job.id === jobId)?.currency ?? "USD";
+  const currency =
+    data.jobs.find((job) => job.id === jobId)?.currency ??
+    data.preferences.currency;
   const amount = (value: number) =>
     data.payVisible ? money(value, currency) : "•••••";
   const summary = (entries: Shift[]) => {
     const gross = entries.reduce(
       (sum, entry) =>
         sum +
-        wagesFor(entry, data.jobs, data.todayPlan) +
+        wagesFor(entry, data.jobs, data.defaultPlan) +
         (entry.entryType === "project" ? 0 : (entry.tips ?? 0)),
       0,
     );
@@ -72,7 +75,7 @@ export function CalendarView({
     entries.map((entry) => (
       <Action
         key={entry.id}
-        title={`${entry.date} · ${entry.entryType === "project" ? entry.projectName : duration(workedMinutes(entry))} · ${amount(wagesFor(entry, data.jobs, data.todayPlan))} — Edit`}
+        title={`${entry.date} · ${entry.entryType === "project" ? entry.projectName : duration(workedMinutes(entry))} · ${amount(wagesFor(entry, data.jobs, data.defaultPlan))} — Edit`}
         onPress={() => onEdit(entry)}
       />
     ));

@@ -3,7 +3,8 @@ import { Alert, Text, View } from "react-native";
 import type { CustomReminder } from "../../types";
 import { Action, Choices, Field, Toggle } from "../../components/FormControls";
 import { TimePickerField } from "../../components/TimePickerField";
-import { colors, styles } from "../../theme";
+import { useThemeTokens } from "../../providers/ThemeProvider";
+import { useClockFormat } from "../settings/useClockFormat";
 import { validateReminder } from "./model";
 
 export function CustomReminders({
@@ -13,6 +14,8 @@ export function CustomReminders({
   value: CustomReminder[];
   onChange: (value: CustomReminder[]) => void;
 }) {
+  const { colors, styles } = useThemeTokens();
+  const { timeLabel } = useClockFormat();
   const [editing, setEditing] = useState<CustomReminder | null>(null);
   return (
     <View style={styles.card}>
@@ -42,7 +45,7 @@ export function CustomReminders({
           />
           <Text style={styles.cardMeta}>
             {item.trigger === "at-time"
-              ? `At ${item.atTime}`
+              ? `At ${timeLabel(item.atTime)}`
               : `${item.offsetMinutes}m after ${item.trigger === "after-clock-in" ? "clock-in" : "lunch starts"}`}
             {item.repeatMinutes > 0 ? ` · repeats ${item.repeatMinutes}m` : ""}
           </Text>
@@ -113,6 +116,7 @@ function ReminderEditor({
   onSave: (value: CustomReminder) => void;
   onCancel: () => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   const [draft, setDraft] = useState(initial);
   const [offset, setOffset] = useState(String(initial.offsetMinutes));
   const [repeat, setRepeat] = useState(String(initial.repeatMinutes || 10));

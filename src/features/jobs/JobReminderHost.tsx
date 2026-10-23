@@ -5,11 +5,14 @@ import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { acknowledgeJobReminder } from "../../store/appSlice";
 import { reconcileJobNotifications } from "../../services/notifications";
 import { Action } from "../../components/FormControls";
-import { colors, styles } from "../../theme";
+import { useThemeTokens } from "../../providers/ThemeProvider";
 import { alertNextAt, jobAlerts, notificationTimes } from "./model";
+import { usePrivacyLock } from "../settings/PrivacyProvider";
 
 // Mounted once above the routes, so reminders keep working outside Tracker.
 export function JobReminderHost() {
+  const { locked, configured: privacyConfigured } = usePrivacyLock();
+  const { colors, styles } = useThemeTokens();
   const data = useAppSelector((state) => state.app);
   const dispatch = useAppDispatch();
   const insets = useSafeAreaInsets();
@@ -37,12 +40,48 @@ export function JobReminderHost() {
     () =>
       [data.activeShift, ...data.extraShifts].flatMap((shift) => {
         const job = data.jobs.find((item) => item.id === shift?.jobId);
+        const defaults = data.preferences.defaultReminders;
+        const settings = job?.reminderSettings ?? {
+          ...defaults,
+          lunchMode: data.reminders.lunchReminder
+            ? defaults.lunchMode === "off"
+              ? "relative"
+              : defaults.lunchMode
+            : "off",
+          returnReminder: data.reminders.returnReminder,
+          sound: data.reminders.reminderSound,
+          overlay: data.reminders.reminderOverlay,
+          indicator: data.reminders.reminderTabFlash,
+          snoozeMinutes: data.reminders.reminderSnoozeMinutes,
+        };
+        const custom =
+          shift?.id === data.activeShift?.id &&
+          data.reminders.customReminderMinutes
+            ? [
+                ...settings.custom,
+                {
+                  id: "tracker-custom",
+                  name: "Custom work reminder",
+                  message: "Your scheduled work reminder is due.",
+                  enabled: true,
+                  trigger: "after-clock-in" as const,
+                  offsetMinutes: data.reminders.customReminderMinutes,
+                  atTime: "",
+                  repeatMinutes: 0,
+                  priority: "medium" as const,
+                },
+              ]
+            : settings.custom;
         return shift && job
           ? jobAlerts(
               shift,
               shift.id === data.activeShift?.id
-                ? { ...job, lunchMinutes: data.todayPlan.lunchMinutes }
-                : job,
+                ? {
+                    ...job,
+                    reminderSettings: { ...settings, custom },
+                    lunchMinutes: data.todayPlan.lunchMinutes,
+                  }
+                : { ...job, reminderSettings: settings },
             )
           : [];
       }),
@@ -51,6 +90,8 @@ export function JobReminderHost() {
       data.extraShifts,
       data.jobs,
       data.todayPlan.lunchMinutes,
+      data.preferences.defaultReminders,
+      data.reminders,
     ],
   );
   const acknowledgements = data.jobReminderAcknowledgements;
@@ -86,16 +127,24 @@ export function JobReminderHost() {
         : [];
     void reconcileJobNotifications(
       times.map(({ alert, at }) => ({
-        name: alert.name,
-        message: alert.message,
+        name: privacyConfigured ? "Clocked & Paid reminder" : alert.name,
+        message: privacyConfigured
+          ? "Unlock the app to view your work reminder."
+          : alert.message,
         at,
         sound: alert.settings.sound,
       })),
     ).catch(() => {
       /* OS permission may change externally; in-app reminders remain available. */
     });
-  }, [alerts, acknowledgements, data.notificationPermission, queueRevision]);
-  if (!current) return null;
+  }, [
+    alerts,
+    acknowledgements,
+    data.notificationPermission,
+    queueRevision,
+    privacyConfigured,
+  ]);
+  if (!current || locked) return null;
   const job = data.jobs.find((item) => item.id === current.jobId);
   const content = (
     <View

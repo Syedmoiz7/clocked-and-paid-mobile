@@ -1,6 +1,6 @@
 import { useState, type PropsWithChildren } from "react";
 import { Pressable, Text, View } from "react-native";
-import { colors, styles } from "../../theme";
+import { useThemeTokens } from "../../providers/ThemeProvider";
 export function PaySection({
   title,
   subtitle,
@@ -11,6 +11,7 @@ export function PaySection({
   subtitle?: string;
   defaultOpen?: boolean;
 }>) {
+  const { colors, styles } = useThemeTokens();
   const [open, setOpen] = useState(defaultOpen);
   return (
     <View style={styles.card}>
@@ -40,6 +41,7 @@ export function Metric({
   accent?: boolean;
   color?: string;
 }) {
+  const { colors, styles } = useThemeTokens();
   return (
     <View style={{ minWidth: "45%", paddingVertical: 10 }}>
       <Text style={styles.cardMeta}>{label}</Text>

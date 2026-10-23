@@ -9,7 +9,7 @@ import {
   Toggle,
 } from "../../components/FormControls";
 import { TimePickerField } from "../../components/TimePickerField";
-import { colors, styles } from "../../theme";
+import { useThemeTokens } from "../../providers/ThemeProvider";
 import { localDate } from "../../utils/dateOnly";
 import {
   currencies,
@@ -32,6 +32,7 @@ export function JobForm({
   onSave: (job: MockJob) => void;
   onCancel: () => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   const [draft, setDraft] = useState<MockJob>({
     ...initial,
     reminderSettings: initial.reminderSettings ?? reminderDefaults(),

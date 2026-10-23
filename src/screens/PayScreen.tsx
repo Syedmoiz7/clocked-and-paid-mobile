@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { AppState, Deduction, MockPaycheck, PaySchedule } from "../types";
-import { colors, styles } from "../theme";
+import { useThemeTokens } from "../providers/ThemeProvider";
 import { Action, Choices, DateField, Toggle } from "../components/FormControls";
 import {
   currencies,
@@ -58,9 +58,14 @@ export function PayScreen({
   onUndoReceipt,
   onMarkPaid,
 }: Props) {
+  const { colors, styles } = useThemeTokens();
   const [range, setRange] = useState<Range>("last30");
   const [scope, setScope] = useState("");
-  const [currency, setCurrency] = useState("USD");
+  const [currency, setCurrency] = useState(data.preferences.currency);
+  useEffect(
+    () => setCurrency(data.preferences.currency),
+    [data.preferences.currency],
+  );
   const [mode, setMode] = useState("payPeriod");
   const [customStart, setCustomStart] = useState(addDays(localDate(), -29));
   const [customEnd, setCustomEnd] = useState(localDate());
@@ -86,13 +91,14 @@ export function PayScreen({
   const code = job?.currency ?? currency;
   const availableCurrencies = [
     ...new Set([
-      "USD",
-      ...data.jobs.map((item) => item.currency ?? "USD"),
+      data.preferences.currency,
+      ...(data.activeShift?.currency ? [data.activeShift.currency] : []),
+      ...data.jobs.map((item) => item.currency ?? data.preferences.currency),
       ...data.history.map(
         (entry) =>
           entry.currency ??
           data.jobs.find((item) => item.id === entry.jobId)?.currency ??
-          "USD",
+          data.preferences.currency,
       ),
     ]),
   ].filter((value) => currencies.includes(value));
@@ -151,8 +157,8 @@ export function PayScreen({
     (item) =>
       (!jobId || !item.jobId || item.jobId === jobId) &&
       (!item.jobId ||
-        (data.jobs.find((job) => job.id === item.jobId)?.currency ?? "USD") ===
-          code),
+        (data.jobs.find((job) => job.id === item.jobId)?.currency ??
+          data.preferences.currency) === code),
   );
   const projection = projectedDeductions(
     { ...data, deductions: visibleDeductions },

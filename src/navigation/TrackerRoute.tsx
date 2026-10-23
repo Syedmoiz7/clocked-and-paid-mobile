@@ -17,7 +17,6 @@ import {
   savePlanAsDefault,
   selectJob,
   setNotificationPermission,
-  setScheduledLunchReminder,
   setScheduledReturnReminder,
   startBreak,
   startExtraShift,
@@ -32,10 +31,10 @@ import type { MockJob, Shift } from "../types";
 import {
   cancelReminder,
   requestReminderPermission,
-  scheduleReminder,
 } from "../services/notifications";
 import { localDate } from "../features/history/model";
 import { entitlementsFor } from "../services/entitlements";
+import { setPayVisible } from "../store/appSlice";
 
 function createShift(jobId: string): Shift {
   const now = new Date().toISOString();
@@ -67,6 +66,8 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
     orphanedShift,
     history,
     hourlyRate,
+    preferences,
+    payVisible,
     isPremium,
     todayPlan,
     reminders,
@@ -124,42 +125,20 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
     }
     const shift = {
       ...createShift(selectedJobId),
-      currency: job.currency ?? "USD",
+      currency: job.currency ?? preferences.currency,
     };
     dispatch(clockIn(shift));
-    if (
-      !job.reminderSettings &&
-      notificationPermission === "granted" &&
-      reminders.lunchReminder
-    )
-      void scheduleReminder(
-        "Lunch reminder",
-        "Your planned lunch break is coming up.",
-        new Date(
-          Date.now() + Math.max(30, todayPlan.plannedHours * 30) * 60_000,
-        ),
-      ).then((id) => dispatch(setScheduledLunchReminder(id)));
-    if (
-      notificationPermission === "granted" &&
-      reminders.customReminderMinutes &&
-      reminders.customReminderMinutes > 0
-    )
-      void scheduleReminder(
-        "Clocked & Paid reminder",
-        "Your custom work reminder is ready.",
-        new Date(Date.now() + reminders.customReminderMinutes * 60_000),
-      );
-  }, [
-    dispatch,
-    jobs,
-    notificationPermission,
-    reminders,
-    selectedJobId,
-    todayPlan.plannedHours,
-  ]);
+  }, [dispatch, jobs, selectedJobId, preferences.currency]);
 
   const handleStartExtraShift = useCallback(
     (jobId: string) => {
+      if (!preferences.allowConcurrentShifts) {
+        Alert.alert(
+          "Concurrent jobs disabled",
+          "Enable concurrent jobs in Settings first.",
+        );
+        return;
+      }
       if (!entitlementsFor({ isPremium }).multipleSimultaneousJobs) {
         onPremium();
         return;
@@ -174,11 +153,20 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
       dispatch(
         startExtraShift({
           ...createShift(jobId),
-          currency: job.currency ?? "USD",
+          currency: job.currency ?? preferences.currency,
         }),
       );
     },
-    [dispatch, jobs, activeShift, extraShifts, isPremium, onPremium],
+    [
+      dispatch,
+      jobs,
+      activeShift,
+      extraShifts,
+      isPremium,
+      onPremium,
+      preferences.allowConcurrentShifts,
+      preferences.currency,
+    ],
   );
 
   const handleClockOutExtraShift = useCallback(
@@ -206,12 +194,12 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
       if (job?.enableTips)
         setTipsRequest({
           jobName: job.name,
-          currency: job.currency ?? "USD",
+          currency: shift.currency ?? job.currency ?? preferences.currency,
           onConfirm: finish,
         });
       else finish();
     },
-    [calculateEarnings, dispatch, hourlyRate, jobs],
+    [calculateEarnings, dispatch, hourlyRate, jobs, preferences.currency],
   );
 
   const completeClockOut = useCallback(
@@ -256,10 +244,11 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
     }
     setTipsRequest({
       jobName: activeJob.name,
-      currency: activeJob.currency ?? "USD",
+      currency:
+        activeShift.currency ?? activeJob.currency ?? preferences.currency,
       onConfirm: completeClockOut,
     });
-  }, [activeShift, activeJob, completeClockOut]);
+  }, [activeShift, activeJob, completeClockOut, preferences.currency]);
 
   const handleResolveOrphan = useCallback(() => {
     if (!orphanedShift) return;
@@ -293,16 +282,6 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
       dispatch(endLunch(new Date().toISOString()));
     } else {
       dispatch(startLunch(new Date().toISOString()));
-      if (
-        !activeJob?.reminderSettings &&
-        notificationPermission === "granted" &&
-        reminders.returnReminder
-      )
-        void scheduleReminder(
-          "Return to work",
-          "Your lunch break is scheduled to end now.",
-          new Date(Date.now() + todayPlan.lunchMinutes * 60_000),
-        ).then((id) => dispatch(setScheduledReturnReminder(id)));
     }
   }, [
     activeShift,
@@ -415,7 +394,8 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
         startedAt: startedAt.toISOString(),
         endedAt: endedAt.toISOString(),
         date: localDate(startedAt),
-        currency: activeJob.currency ?? "USD",
+        currency:
+          activeShift?.currency ?? activeJob.currency ?? preferences.currency,
         lunchMinutes,
         lunchStartedAt: null,
         breakStartedAt: null,
@@ -439,6 +419,7 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
       dispatch,
       hourlyRate,
       selectedJobId,
+      preferences.currency,
     ],
   );
 
@@ -532,6 +513,9 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
   return (
     <>
       <TrackerScreen
+        preferences={preferences}
+        payVisible={payVisible}
+        onPayVisible={(value) => dispatch(setPayVisible(value))}
         activeShift={activeShift}
         extraShifts={extraShifts}
         orphanedShift={orphanedShift}

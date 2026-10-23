@@ -149,6 +149,8 @@ export type ReminderSettings = {
 };
 
 export type AppState = {
+  preferences: AppPreferences;
+  account: MockAccount;
   activeShift: Shift | null;
   extraShifts: Shift[];
   history: Shift[];
@@ -171,4 +173,22 @@ export type AppState = {
   payVisible: boolean;
   paySchedules: Record<string, PaySchedule>;
   jobReminderAcknowledgements: Record<string, number>;
+};
+
+export type MockAccount = {
+  mode: "guest" | "mock";
+  name: string;
+  email: string;
+};
+export type AppPreferences = {
+  enableManualEditing: boolean;
+  allowConcurrentShifts: boolean;
+  showDailyQuote: boolean;
+  clockFormat: "12h" | "24h";
+  typicalStartTime: string;
+  payHiddenByDefault: boolean;
+  headerTimerMode: "off" | "count-up" | "count-down";
+  themeHue: number;
+  currency: string;
+  defaultReminders: JobReminderSettings;
 };

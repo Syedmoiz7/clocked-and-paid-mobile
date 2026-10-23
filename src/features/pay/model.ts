@@ -164,7 +164,7 @@ export function moveSchedule(
 export function scopeCurrency(
   data: AppState,
   jobId: string | null,
-  fallback = "USD",
+  fallback = data.preferences.currency,
 ) {
   return data.jobs.find((job) => job.id === jobId)?.currency ?? fallback;
 }
@@ -193,12 +193,12 @@ export function periodEntries(
 }
 export function shiftAmounts(entry: Shift, data: AppState, now?: number) {
   const job = data.jobs.find((job) => job.id === entry.jobId);
+  const fallback =
+    entry.id === data.activeShift?.id ? data.todayPlan : data.defaultPlan;
   const plan = {
-    ...data.todayPlan,
-    overtimeThreshold:
-      job?.overtimeThreshold ?? data.todayPlan.overtimeThreshold,
-    overtimeMultiplier:
-      job?.overtimeMultiplier ?? data.todayPlan.overtimeMultiplier,
+    ...fallback,
+    overtimeThreshold: job?.overtimeThreshold ?? fallback.overtimeThreshold,
+    overtimeMultiplier: job?.overtimeMultiplier ?? fallback.overtimeMultiplier,
   };
   const wages = wagesFor(entry, data.jobs, plan, now);
   const tips = entry.entryType === "project" ? 0 : (entry.tips ?? 0);
@@ -489,7 +489,7 @@ export function financialSummary(
       0,
       amounts.minutes -
         (data.jobs.find((job) => job.id === id)?.overtimeThreshold ??
-          data.todayPlan.overtimeThreshold) *
+          data.defaultPlan.overtimeThreshold) *
           60,
     );
     const covered = data.paychecks.some(

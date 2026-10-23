@@ -32,6 +32,10 @@ PODS:
     - Yoga
   - ExpoAsset (12.0.13):
     - ExpoModulesCore
+  - ExpoCrypto (15.0.9):
+    - ExpoModulesCore
+  - ExpoDocumentPicker (14.0.8):
+    - ExpoModulesCore
   - ExpoFileSystem (19.0.24):
     - ExpoModulesCore
   - ExpoFont (14.0.12):
@@ -42,6 +46,8 @@ PODS:
   - ExpoKeepAwake (15.0.8):
     - ExpoModulesCore
   - ExpoLinking (8.0.12):
+    - ExpoModulesCore
+  - ExpoLocalAuthentication (17.0.9):
     - ExpoModulesCore
   - ExpoModulesCore (3.0.30):
     - hermes-engine
@@ -67,6 +73,8 @@ PODS:
     - ReactNativeDependencies
     - Yoga
   - ExpoSecureStore (15.0.8):
+    - ExpoModulesCore
+  - ExpoSharing (14.0.8):
     - ExpoModulesCore
   - ExpoSQLite (16.0.10):
     - ExpoModulesCore
@@ -1849,13 +1857,17 @@ DEPENDENCIES:
   - EXNotifications (from `../node_modules/expo-notifications/ios`)
   - Expo (from `../node_modules/expo`)
   - ExpoAsset (from `../node_modules/expo/node_modules/expo-asset/ios`)
-  - ExpoFileSystem (from `../node_modules/expo/node_modules/expo-file-system/ios`)
+  - ExpoCrypto (from `../node_modules/expo-crypto/ios`)
+  - ExpoDocumentPicker (from `../node_modules/expo-document-picker/ios`)
+  - ExpoFileSystem (from `../node_modules/expo-file-system/ios`)
   - ExpoFont (from `../node_modules/expo/node_modules/expo-font/ios`)
   - ExpoHead (from `../node_modules/expo-router/ios`)
   - ExpoKeepAwake (from `../node_modules/expo/node_modules/expo-keep-awake/ios`)
   - ExpoLinking (from `../node_modules/expo-linking/ios`)
+  - ExpoLocalAuthentication (from `../node_modules/expo-local-authentication/ios`)
   - ExpoModulesCore (from `../node_modules/expo-modules-core`)
   - ExpoSecureStore (from `../node_modules/expo-secure-store/ios`)
+  - ExpoSharing (from `../node_modules/expo-sharing/ios`)
   - ExpoSQLite (from `../node_modules/expo-sqlite/ios`)
   - FBLazyVector (from `../node_modules/react-native/Libraries/FBLazyVector`)
   - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
@@ -1940,8 +1952,12 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo"
   ExpoAsset:
     :path: "../node_modules/expo/node_modules/expo-asset/ios"
+  ExpoCrypto:
+    :path: "../node_modules/expo-crypto/ios"
+  ExpoDocumentPicker:
+    :path: "../node_modules/expo-document-picker/ios"
   ExpoFileSystem:
-    :path: "../node_modules/expo/node_modules/expo-file-system/ios"
+    :path: "../node_modules/expo-file-system/ios"
   ExpoFont:
     :path: "../node_modules/expo/node_modules/expo-font/ios"
   ExpoHead:
@@ -1950,10 +1966,14 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo/node_modules/expo-keep-awake/ios"
   ExpoLinking:
     :path: "../node_modules/expo-linking/ios"
+  ExpoLocalAuthentication:
+    :path: "../node_modules/expo-local-authentication/ios"
   ExpoModulesCore:
     :path: "../node_modules/expo-modules-core"
   ExpoSecureStore:
     :path: "../node_modules/expo-secure-store/ios"
+  ExpoSharing:
+    :path: "../node_modules/expo-sharing/ios"
   ExpoSQLite:
     :path: "../node_modules/expo-sqlite/ios"
   FBLazyVector:
@@ -2104,13 +2124,17 @@ SPEC CHECKSUMS:
   EXNotifications: c67e92b9fdfe785ff9dbdc5f4c0ff935de357da7
   Expo: 3ccbb4de93972b9a8214b8853ab0c4d4a317e62b
   ExpoAsset: 9e5a7c9c0a9fb83ad5b2bb365141f2bd7f289b66
+  ExpoCrypto: e2a2c4c748aac8485e5675f027b7901f511d43ff
+  ExpoDocumentPicker: 7cd9e71a0f66fb19eb0a586d6f26eee1284692e0
   ExpoFileSystem: 8e87545aef1d8d31f244edbfdd0780df4e5bac2e
   ExpoFont: dfb7c572372b610da45b41e3b436321fd6a97215
   ExpoHead: 33924c5829f9a3f98a5bd432d23c0e02ef64afcc
   ExpoKeepAwake: 55f75eca6499bb9e4231ebad6f3e9cb8f99c0296
   ExpoLinking: 2ef632ad5013e3f1568fae9408d56ab9af5efc55
+  ExpoLocalAuthentication: 58fadf98e9caeae82455d15e4bffc94691585c83
   ExpoModulesCore: 9e6a5514828e7dd5ded9e99d33557be2d284e660
   ExpoSecureStore: d32f751874a2ceb5aaeebeb3578e165c1ba2b24a
+  ExpoSharing: 0d983394ed4a80334bab5a0d5384f75710feb7e8
   ExpoSQLite: 7eedbe476870a5f18d6b89c817c4ac6f299830ad
   FBLazyVector: 9e0cd874afd81d9a4d36679daca991b58b260d42
   hermes-engine: 35c763d57c9832d0eef764316ca1c4d043581394

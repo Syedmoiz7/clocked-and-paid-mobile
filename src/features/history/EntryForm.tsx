@@ -15,7 +15,7 @@ export {
   Field,
   Toggle,
 } from "../../components/FormControls";
-import { colors, styles } from "../../theme";
+import { useThemeTokens } from "../../providers/ThemeProvider";
 import type { MockJob } from "../../types";
 import { currencies, type EntryDraft } from "./model";
 function OptionalTime({
@@ -27,6 +27,7 @@ function OptionalTime({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   return (
     <View style={{ marginTop: 12 }}>
       <TimePickerField label={label} value={value} onChange={onChange} />
@@ -55,6 +56,7 @@ export function EntryForm({
   onSave: (draft: EntryDraft) => string | null;
   onCancel: () => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   const [draft, setDraft] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const update = (changes: Partial<EntryDraft>) => {

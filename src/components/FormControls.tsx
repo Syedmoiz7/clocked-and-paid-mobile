@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { colors, styles } from "../theme";
+import { useThemeTokens } from "../providers/ThemeProvider";
 import { localDate, validDate } from "../utils/dateOnly";
 export function Action({
   title,
@@ -19,6 +19,7 @@ export function Action({
   onPress: () => void;
   disabled?: boolean;
 }) {
+  const { colors, styles } = useThemeTokens();
   return (
     <Pressable
       accessibilityRole="button"
@@ -43,6 +44,7 @@ export function Toggle({
   value: boolean;
   onChange: (value: boolean) => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   return (
     <View
       style={{
@@ -75,6 +77,7 @@ export function Choices({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   return (
     <ScrollView
       horizontal
@@ -117,6 +120,7 @@ export function DateField({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(new Date());
   return (
@@ -163,13 +167,20 @@ export function Field({
   onChange,
   numeric = false,
   multiline = false,
+  secure = false,
+  keyboardType,
+  autoCapitalize,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   numeric?: boolean;
   multiline?: boolean;
+  secure?: boolean;
+  keyboardType?: import("react-native").TextInputProps["keyboardType"];
+  autoCapitalize?: import("react-native").TextInputProps["autoCapitalize"];
 }) {
+  const { colors, styles } = useThemeTokens();
   return (
     <View style={{ marginTop: 10 }}>
       <Text style={styles.cardMeta}>{label}</Text>
@@ -177,8 +188,11 @@ export function Field({
         accessibilityLabel={label}
         value={value}
         onChangeText={onChange}
-        keyboardType={numeric ? "decimal-pad" : "default"}
+        keyboardType={keyboardType ?? (numeric ? "decimal-pad" : "default")}
+        autoCapitalize={secure ? "none" : autoCapitalize}
+        autoCorrect={!secure && keyboardType !== "email-address"}
         multiline={multiline}
+        secureTextEntry={secure}
         style={{
           backgroundColor: colors.background,
           borderColor: colors.border,

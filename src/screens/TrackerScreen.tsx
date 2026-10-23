@@ -11,8 +11,15 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { PaywallCard } from "../components/PaywallCard";
 import { TimePickerField } from "../components/TimePickerField";
-import { colors, styles } from "../theme";
-import type { MockJob, ReminderSettings, Shift, TodayPlan } from "../types";
+import { useThemeTokens } from "../providers/ThemeProvider";
+import type {
+  AppPreferences,
+  MockJob,
+  ReminderSettings,
+  Shift,
+  TodayPlan,
+} from "../types";
+import { useClockFormat } from "../features/settings/useClockFormat";
 import { money } from "../features/history/model";
 
 type ManualTimes = {
@@ -22,6 +29,9 @@ type ManualTimes = {
   end: string;
 };
 type Props = {
+  preferences: AppPreferences;
+  payVisible: boolean;
+  onPayVisible: (value: boolean) => void;
   activeShift: Shift | null;
   extraShifts: Shift[];
   orphanedShift: Shift | null;
@@ -90,6 +100,7 @@ function Section({
   subtitle: string;
   children: ReactNode;
 }) {
+  const { colors, styles } = useThemeTokens();
   const [open, setOpen] = useState(false);
   return (
     <View style={styles.card}>
@@ -119,6 +130,7 @@ function ToggleRow({
   enabled: boolean;
   onPress: () => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   return (
     <Pressable
       onPress={onPress}
@@ -169,6 +181,7 @@ function NumericField({
   onChange: (value: string) => void;
   keyboardType?: "decimal-pad" | "number-pad";
 }) {
+  const { colors, styles } = useThemeTokens();
   return (
     <View>
       <Text style={styles.cardMeta}>{label}</Text>
@@ -191,6 +204,9 @@ function NumericField({
 }
 
 export function TrackerScreen(props: Props) {
+  const { colors, styles } = useThemeTokens();
+  const { timeLabel, format } = useClockFormat();
+  const { preferences, payVisible, onPayVisible } = props;
   const {
     activeShift,
     extraShifts,
@@ -228,16 +244,17 @@ export function TrackerScreen(props: Props) {
   const availableJobs = allJobs.filter((job) => !job.archived);
   const jobs = availableJobs.length > 1 ? availableJobs : [];
   const currency =
+    activeShift?.currency ??
     allJobs.find((job) => job.id === (activeShift?.jobId ?? selectedJobId))
-      ?.currency ?? "USD";
+      ?.currency ??
+    preferences.currency;
   const [now, setNow] = useState(new Date());
   const [quote, setQuote] = useState(0);
   const [payMode, setPayMode] = useState<"gross" | "net">("gross");
-  const [payVisible, setPayVisible] = useState(true);
+  const setPayVisible = (update: (value: boolean) => boolean) =>
+    onPayVisible(update(payVisible));
   const [completedOpen, setCompletedOpen] = useState(true);
-  const [reminderVisible, setReminderVisible] = useState(false);
-  const [reminderSnoozedUntil, setReminderSnoozedUntil] = useState(0);
-  const [reminderDismissed, setReminderDismissed] = useState(false);
+
   const [manual, setManual] = useState<ManualTimes>({
     start: "",
     lunchStart: "",
@@ -256,38 +273,22 @@ export function TrackerScreen(props: Props) {
   const [calcLunchMinutes, setCalcLunchMinutes] = useState("30");
   const [confirmApply, setConfirmApply] = useState(false);
   useEffect(() => {
+    setCalcHours(String(defaultPlan.plannedHours));
+    setCalcLunchEnabled(defaultPlan.lunchEnabled);
+    setCalcLunchMinutes(String(defaultPlan.lunchMinutes));
+    if (preferences.typicalStartTime)
+      setCalcStart(preferences.typicalStartTime);
+  }, [
+    defaultPlan.plannedHours,
+    defaultPlan.lunchEnabled,
+    defaultPlan.lunchMinutes,
+    preferences.typicalStartTime,
+  ]);
+  useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
-  useEffect(() => {
-    if (!activeShift) {
-      setReminderVisible(false);
-      setReminderSnoozedUntil(0);
-      setReminderDismissed(false);
-      return;
-    }
-    const customMinutes = reminders.customReminderMinutes;
-    const due = Boolean(
-      customMinutes &&
-      customMinutes > 0 &&
-      now.getTime() - Date.parse(activeShift.startedAt) >=
-        customMinutes * 60_000,
-    );
-    if (
-      due &&
-      reminders.reminderOverlay &&
-      !reminderDismissed &&
-      now.getTime() >= reminderSnoozedUntil
-    )
-      setReminderVisible(true);
-  }, [
-    activeShift,
-    now,
-    reminderDismissed,
-    reminderSnoozedUntil,
-    reminders.customReminderMinutes,
-    reminders.reminderOverlay,
-  ]);
+
   const working = Boolean(activeShift);
   const lunchActive = Boolean(activeShift?.lunchStartedAt);
   const breakActive = Boolean(activeShift?.breakStartedAt);
@@ -324,7 +325,7 @@ export function TrackerScreen(props: Props) {
   );
   const timer =
     todayPlan.timerDirection === "count-down"
-      ? Math.max(0, todayPlan.plannedHours * 3600 - worked)
+      ? Math.abs(todayPlan.plannedHours * 3600 - worked)
       : elapsed;
   const lunchRemaining = Math.max(
     0,
@@ -355,14 +356,14 @@ export function TrackerScreen(props: Props) {
       const start = parseTime(calcStart);
       const hours = Number(calcHours);
       return start !== null && Number.isFinite(hours)
-        ? `Clock out at ${formatTime(start + hours * 60 + lunch)}`
+        ? `Clock out at ${timeLabel(formatTime(start + hours * 60 + lunch))}`
         : "Enter a valid start time";
     }
     if (calcMode === "reverse") {
       const end = parseTime(calcTarget);
       const hours = Number(calcHours);
       return end !== null && Number.isFinite(hours)
-        ? `Clock in by ${formatTime(end - hours * 60 - lunch)}`
+        ? `Clock in by ${timeLabel(formatTime(end - hours * 60 - lunch))}`
         : "Enter a valid end time";
     }
     const start = parseTime(calcStart);
@@ -374,6 +375,7 @@ export function TrackerScreen(props: Props) {
       : `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m worked`;
   }, [
     calcEnd,
+    format,
     calcHours,
     calcLunchEnabled,
     calcLunchMinutes,
@@ -450,62 +452,6 @@ export function TrackerScreen(props: Props) {
 
   return (
     <SafeAreaView style={styles.screen} edges={["top"]}>
-      <Modal
-        visible={reminderVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setReminderVisible(false)}
-      >
-        <View
-          style={{
-            alignItems: "center",
-            backgroundColor: "#00000099",
-            flex: 1,
-            justifyContent: "center",
-            padding: 24,
-          }}
-        >
-          <View
-            style={[
-              styles.card,
-              { borderColor: colors.warning, width: "100%" },
-            ]}
-          >
-            <Text
-              style={{ color: colors.warning, fontSize: 18, fontWeight: "900" }}
-            >
-              Custom reminder
-            </Text>
-            <Text style={[styles.cardMeta, { marginTop: 8 }]}>
-              Your scheduled work reminder is due.
-            </Text>
-            <View style={{ flexDirection: "row", gap: 10, marginTop: 18 }}>
-              <Pressable
-                onPress={() => {
-                  setReminderVisible(false);
-                  setReminderDismissed(true);
-                }}
-                style={[styles.secondaryButton, { flex: 1 }]}
-              >
-                <Text style={styles.secondaryButtonText}>Dismiss</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  setReminderVisible(false);
-                  setReminderSnoozedUntil(
-                    Date.now() + reminders.reminderSnoozeMinutes * 60_000,
-                  );
-                }}
-                style={[styles.button, { flex: 1 }]}
-              >
-                <Text style={styles.buttonText}>
-                  Snooze {reminders.reminderSnoozeMinutes}m
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -606,31 +552,35 @@ export function TrackerScreen(props: Props) {
               </Text>
             </View>
           </View>
-          <View
-            style={{
-              backgroundColor: `${colors.accent}0d`,
-              borderColor: `${colors.accent}25`,
-              borderRadius: 14,
-              borderWidth: 1,
-              flexDirection: "row",
-              marginTop: 16,
-              padding: 12,
-            }}
-          >
-            <Text
-              style={{ color: colors.accent, fontSize: 16, marginRight: 8 }}
+          {preferences.showDailyQuote && (
+            <View
+              style={{
+                backgroundColor: `${colors.accent}0d`,
+                borderColor: `${colors.accent}25`,
+                borderRadius: 14,
+                borderWidth: 1,
+                flexDirection: "row",
+                marginTop: 16,
+                padding: 12,
+              }}
             >
-              ✦
-            </Text>
-            <Text style={{ color: colors.muted, flex: 1, fontStyle: "italic" }}>
-              {quotes[quote]}
-            </Text>
-            <Pressable
-              onPress={() => setQuote((value) => (value + 1) % quotes.length)}
-            >
-              <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
-            </Pressable>
-          </View>
+              <Text
+                style={{ color: colors.accent, fontSize: 16, marginRight: 8 }}
+              >
+                ✦
+              </Text>
+              <Text
+                style={{ color: colors.muted, flex: 1, fontStyle: "italic" }}
+              >
+                {quotes[quote]}
+              </Text>
+              <Pressable
+                onPress={() => setQuote((value) => (value + 1) % quotes.length)}
+              >
+                <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
+              </Pressable>
+            </View>
+          )}
         </View>
         <View style={styles.card}>
           <Text style={styles.cardMeta}>JOB FOR THIS SHIFT</Text>
@@ -684,6 +634,10 @@ export function TrackerScreen(props: Props) {
                 marginTop: 10,
               }}
             >
+              {todayPlan.timerDirection === "count-down" &&
+              worked > todayPlan.plannedHours * 3600
+                ? "+"
+                : ""}
               {formatDuration(timer)}
             </Text>
             <Pressable
@@ -811,7 +765,10 @@ export function TrackerScreen(props: Props) {
             </Text>
           </View>
         )}
-        {(extraShifts.length > 0 || (working && availableJobs.length > 1)) && (
+        {(extraShifts.length > 0 ||
+          (working &&
+            preferences.allowConcurrentShifts &&
+            availableJobs.length > 1)) && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Additional Active Shifts</Text>
             {extraShifts.map((shift) => {
@@ -878,6 +835,7 @@ export function TrackerScreen(props: Props) {
               );
             })}
             {working &&
+              preferences.allowConcurrentShifts &&
               availableJobs.some(
                 (job) =>
                   job.id !== activeShift?.jobId &&
@@ -1026,40 +984,33 @@ export function TrackerScreen(props: Props) {
                 <View key={shift.id} style={[styles.card, { marginTop: 10 }]}>
                   <Text style={styles.cardTitle}>{shift.date}</Text>
                   <Text style={styles.cardMeta}>
-                    {new Date(shift.startedAt).toLocaleTimeString([], {
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}{" "}
-                    –{" "}
-                    {shift.endedAt
-                      ? new Date(shift.endedAt).toLocaleTimeString([], {
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })
-                      : "Active"}
+                    {timeLabel(shift.startedAt)} –{" "}
+                    {shift.endedAt ? timeLabel(shift.endedAt) : "Active"}
                   </Text>
-                  <Pressable
-                    onPress={() => {
-                      setEditingShiftId(shift.id);
-                      setManual({
-                        start: shiftTime(shift.startedAt),
-                        lunchStart: "",
-                        lunchEnd: "",
-                        end: shiftTime(shift.endedAt),
-                      });
-                    }}
-                    style={{ alignSelf: "flex-start", marginTop: 10 }}
-                  >
-                    <Text
-                      style={{
-                        color: colors.blue,
-                        fontSize: 12,
-                        fontWeight: "800",
+                  {preferences.enableManualEditing && (
+                    <Pressable
+                      onPress={() => {
+                        setEditingShiftId(shift.id);
+                        setManual({
+                          start: shiftTime(shift.startedAt),
+                          lunchStart: "",
+                          lunchEnd: "",
+                          end: shiftTime(shift.endedAt),
+                        });
                       }}
+                      style={{ alignSelf: "flex-start", marginTop: 10 }}
                     >
-                      Edit times
-                    </Text>
-                  </Pressable>
+                      <Text
+                        style={{
+                          color: colors.blue,
+                          fontSize: 12,
+                          fontWeight: "800",
+                        }}
+                      >
+                        Edit times
+                      </Text>
+                    </Pressable>
+                  )}
                   <Text
                     style={{
                       color: colors.accent,
@@ -1068,66 +1019,70 @@ export function TrackerScreen(props: Props) {
                       marginTop: 8,
                     }}
                   >
-                    {money(
-                      shift.earnings,
-                      shift.currency ??
-                        allJobs.find((job) => job.id === shift.jobId)
-                          ?.currency ??
-                        "USD",
-                    )}
+                    {payVisible
+                      ? money(
+                          shift.earnings,
+                          shift.currency ??
+                            allJobs.find((job) => job.id === shift.jobId)
+                              ?.currency ??
+                            "USD",
+                        )
+                      : "•••••"}
                   </Text>
                 </View>
               ))}
           </View>
         )}
-        <Section
-          title={!working ? "Enter Today's Times" : "Manual Adjustments"}
-          subtitle={
-            !working
-              ? "Started late or forgot to clock in?"
-              : "Override any time entry"
-          }
-        >
-          <Text style={styles.cardMeta}>Tap a field to choose a time.</Text>
-          <TimePickerField
-            label="Clock in"
-            value={manual.start}
-            onChange={(value) =>
-              setManual((state) => ({ ...state, start: value }))
+        {preferences.enableManualEditing && (
+          <Section
+            title={!working ? "Enter Today's Times" : "Manual Adjustments"}
+            subtitle={
+              !working
+                ? "Started late or forgot to clock in?"
+                : "Override any time entry"
             }
-          />
-          <TimePickerField
-            label="Lunch start"
-            value={manual.lunchStart}
-            onChange={(value) =>
-              setManual((state) => ({ ...state, lunchStart: value }))
-            }
-          />
-          <TimePickerField
-            label="Lunch end"
-            value={manual.lunchEnd}
-            onChange={(value) =>
-              setManual((state) => ({ ...state, lunchEnd: value }))
-            }
-          />
-          <TimePickerField
-            label="Clock out"
-            value={manual.end}
-            onChange={(value) =>
-              setManual((state) => ({ ...state, end: value }))
-            }
-          />
-          <Pressable
-            onPress={saveManual}
-            style={[styles.secondaryButton, { borderColor: colors.accent }]}
           >
-            <Text
-              style={[styles.secondaryButtonText, { color: colors.accent }]}
+            <Text style={styles.cardMeta}>Tap a field to choose a time.</Text>
+            <TimePickerField
+              label="Clock in"
+              value={manual.start}
+              onChange={(value) =>
+                setManual((state) => ({ ...state, start: value }))
+              }
+            />
+            <TimePickerField
+              label="Lunch start"
+              value={manual.lunchStart}
+              onChange={(value) =>
+                setManual((state) => ({ ...state, lunchStart: value }))
+              }
+            />
+            <TimePickerField
+              label="Lunch end"
+              value={manual.lunchEnd}
+              onChange={(value) =>
+                setManual((state) => ({ ...state, lunchEnd: value }))
+              }
+            />
+            <TimePickerField
+              label="Clock out"
+              value={manual.end}
+              onChange={(value) =>
+                setManual((state) => ({ ...state, end: value }))
+              }
+            />
+            <Pressable
+              onPress={saveManual}
+              style={[styles.secondaryButton, { borderColor: colors.accent }]}
             >
-              Save time entry
-            </Text>
-          </Pressable>
-        </Section>
+              <Text
+                style={[styles.secondaryButtonText, { color: colors.accent }]}
+              >
+                Save time entry
+              </Text>
+            </Pressable>
+          </Section>
+        )}
         <Section
           title="Today's Plan"
           subtitle={`${todayPlan.plannedHours}h work · ${todayPlan.lunchEnabled ? `${todayPlan.lunchMinutes}m lunch` : "no lunch"}`}

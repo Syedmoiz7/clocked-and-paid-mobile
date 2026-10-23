@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import { Action, Choices, Field } from "./FormControls";
-import { colors, styles } from "../theme";
+import { useThemeTokens } from "../providers/ThemeProvider";
 import type { Shift } from "../types";
 
 export type TipsRequest = {
@@ -23,6 +23,7 @@ export function TipsDialog({
   request: TipsRequest;
   onClose: () => void;
 }) {
+  const { colors, styles } = useThemeTokens();
   const [amount, setAmount] = useState("");
   const [type, setType] = useState<NonNullable<Shift["tipType"]>>("cash");
   const [error, setError] = useState("");

@@ -1,9 +1,10 @@
 import { Pressable, Text, View } from "react-native";
-import { colors, styles } from "../theme";
+import { useThemeTokens } from "../providers/ThemeProvider";
 
 type Props = { title: string; description: string; onPress: () => void };
 
 export function PaywallCard({ title, description, onPress }: Props) {
+  const { colors, styles } = useThemeTokens();
   return (
     <View
       style={[
@@ -16,7 +17,15 @@ export function PaywallCard({ title, description, onPress }: Props) {
       <Text style={styles.subtitle}>{description}</Text>
       <Pressable
         onPress={onPress}
-        style={[styles.button, { marginTop: 16, backgroundColor: colors.accent, borderColor: colors.accent, borderWidth: 1 }]}
+        style={[
+          styles.button,
+          {
+            marginTop: 16,
+            backgroundColor: colors.accent,
+            borderColor: colors.accent,
+            borderWidth: 1,
+          },
+        ]}
       >
         <Text style={[styles.buttonText, { color: "#fff7fa" }]}>See plans</Text>
       </Pressable>
