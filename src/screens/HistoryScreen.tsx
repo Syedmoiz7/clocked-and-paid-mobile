@@ -1,3 +1,4 @@
+import { entitlementsFor } from "../services/entitlements";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -68,6 +69,7 @@ export function HistoryScreen({
   onEndPreview,
 }: Props) {
   const { colors, styles } = useThemeTokens();
+  const premium = entitlementsFor(data).fullHistory;
   const { timeLabel: displayTime } = useClockFormat();
   const {
     history,
@@ -100,7 +102,7 @@ export function HistoryScreen({
     () => filterEntries(history, filters, activeShift?.id),
     [history, filters, activeShift?.id],
   );
-  const entries = entitledEntries(filtered, data.isPremium);
+  const entries = entitledEntries(filtered, premium);
   const eligible = entries
     .filter((entry) => selectable(entry, paychecks, jobs))
     .map((entry) => entry.id);
@@ -202,10 +204,10 @@ export function HistoryScreen({
             setSelected([]);
           }}
         />
-        {data.isPremium && (
+        {premium && (
           <Action title="End Premium preview" onPress={onEndPreview} />
         )}
-        {!data.isPremium && view === "calendar" && (
+        {!premium && view === "calendar" && (
           <PaywallCard
             title="Full History & Calendar"
             description="Premium adds older entries, calendar views, summaries, and export."
@@ -214,7 +216,7 @@ export function HistoryScreen({
         )}
         {view === "calendar" ? (
           <>
-            {data.isPremium && (
+            {premium && (
               <CalendarView
                 data={data}
                 onEdit={(entry) =>
@@ -614,14 +616,14 @@ export function HistoryScreen({
             })}
             <Action
               title={
-                data.isPremium
+                premium
                   ? "Export filtered history (CSV)"
                   : "Export CSV · Premium"
               }
-              disabled={data.isPremium && !entries.length}
-              onPress={() => (data.isPremium ? onExport(entries) : onPremium())}
+              disabled={premium && !entries.length}
+              onPress={() => (premium ? onExport(entries) : onPremium())}
             />
-            {!data.isPremium && (
+            {!premium && (
               <PaywallCard
                 title="Full History & Calendar"
                 description="Free includes this month’s history. Preview Premium for older entries, calendar views, summaries, and export."

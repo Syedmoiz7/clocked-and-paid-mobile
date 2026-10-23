@@ -1,4 +1,5 @@
-import { Tabs } from "expo-router";
+import { Redirect, Tabs } from "expo-router";
+import { entryDestination } from "../../src/features/auth/model";
 import { Text, View } from "react-native";
 import { useThemeTokens } from "../../src/providers/ThemeProvider";
 import { useEffect, useState } from "react";
@@ -15,9 +16,8 @@ const tabs = [
 
 export default function TabsLayout() {
   const { colors, styles } = useThemeTokens();
-  const { activeShift, todayPlan, preferences } = useAppSelector(
-    (state) => state.app,
-  );
+  const data = useAppSelector((state) => state.app);
+  const { activeShift, todayPlan, preferences } = data;
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!activeShift || preferences.headerTimerMode === "off") return;
@@ -32,6 +32,8 @@ export default function TabsLayout() {
       ? todayPlan.plannedHours * 3600 - seconds
       : seconds;
   const label = `${value < 0 ? "+" : ""}${Math.floor(Math.abs(value) / 3600)}:${String(Math.floor(Math.abs(value) / 60) % 60).padStart(2, "0")}`;
+  const entry = entryDestination(data);
+  if (entry !== "/tracker") return <Redirect href={entry} />;
   return (
     <Tabs
       screenOptions={{

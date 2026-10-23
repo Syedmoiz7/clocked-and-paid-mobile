@@ -513,6 +513,7 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
   return (
     <>
       <TrackerScreen
+        canCalculate={entitlementsFor({ isPremium }).calculator}
         preferences={preferences}
         payVisible={payVisible}
         onPayVisible={(value) => dispatch(setPayVisible(value))}

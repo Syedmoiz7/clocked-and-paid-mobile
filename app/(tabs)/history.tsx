@@ -1,3 +1,4 @@
+import { useUpgrade } from "../../src/features/auth/useUpgrade";
 import { Alert, Share } from "react-native";
 import { useRouter } from "expo-router";
 import { HistoryScreen } from "../../src/screens/HistoryScreen";
@@ -21,6 +22,7 @@ import {
 import { useAppDispatch, useAppSelector } from "../../src/store/hooks";
 import { cancelReminder } from "../../src/services/notifications";
 export default function HistoryRoute() {
+  const onPremium = useUpgrade("fullHistory", "/history");
   const router = useRouter();
   const dispatch = useAppDispatch();
   const data = useAppSelector((state) => state.app);
@@ -53,19 +55,7 @@ export default function HistoryRoute() {
   return (
     <HistoryScreen
       data={data}
-      onPremium={() =>
-        Alert.alert(
-          "Preview Premium",
-          "Try the Premium experience with local mock entitlements. No purchase or charge is made.",
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Start preview",
-              onPress: () => dispatch(setPremiumPreview(true)),
-            },
-          ],
-        )
-      }
+      onPremium={onPremium}
       onEndPreview={() => dispatch(setPremiumPreview(false))}
       onSave={save}
       onDelete={(id) => dispatch(deleteHistoryShift(id))}

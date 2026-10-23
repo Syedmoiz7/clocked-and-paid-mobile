@@ -1,4 +1,4 @@
-import { Alert } from "react-native";
+import { useUpgrade } from "../../src/features/auth/useUpgrade";
 import { PayScreen } from "../../src/screens/PayScreen";
 import { useAppDispatch, useAppSelector } from "../../src/store/hooks";
 import {
@@ -14,24 +14,13 @@ import {
 import { consumptionIds, validateReceipt } from "../../src/features/pay/model";
 
 export default function PayRoute() {
+  const onPremium = useUpgrade("advancedPay", "/pay");
   const data = useAppSelector((state) => state.app);
   const dispatch = useAppDispatch();
   return (
     <PayScreen
       data={data}
-      onPremium={() =>
-        Alert.alert(
-          "Preview Premium",
-          "Explore advanced Pay features with local mock entitlements. No purchase or charge is made.",
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Start preview",
-              onPress: () => dispatch(setPremiumPreview(true)),
-            },
-          ],
-        )
-      }
+      onPremium={onPremium}
       onEndPreview={() => dispatch(setPremiumPreview(false))}
       onPayVisible={(value) => dispatch(setPayVisible(value))}
       onSchedule={(scope, schedule, applyToJob) =>

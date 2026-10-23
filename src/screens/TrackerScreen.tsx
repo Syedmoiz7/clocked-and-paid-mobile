@@ -29,6 +29,7 @@ type ManualTimes = {
   end: string;
 };
 type Props = {
+  canCalculate: boolean;
   preferences: AppPreferences;
   payVisible: boolean;
   onPayVisible: (value: boolean) => void;
@@ -207,6 +208,7 @@ export function TrackerScreen(props: Props) {
   const { colors, styles } = useThemeTokens();
   const { timeLabel, format } = useClockFormat();
   const { preferences, payVisible, onPayVisible } = props;
+  const { canCalculate } = props;
   const {
     activeShift,
     extraShifts,
@@ -272,6 +274,9 @@ export function TrackerScreen(props: Props) {
   const [calcLunchEnabled, setCalcLunchEnabled] = useState(true);
   const [calcLunchMinutes, setCalcLunchMinutes] = useState("30");
   const [confirmApply, setConfirmApply] = useState(false);
+  useEffect(() => {
+    if (!canCalculate) setConfirmApply(false);
+  }, [canCalculate]);
   useEffect(() => {
     setCalcHours(String(defaultPlan.plannedHours));
     setCalcLunchEnabled(defaultPlan.lunchEnabled);
@@ -384,6 +389,10 @@ export function TrackerScreen(props: Props) {
     calcTarget,
   ]);
   const applyCalculator = () => {
+    if (!canCalculate) {
+      onPremium();
+      return;
+    }
     const lunch = calcLunchEnabled
       ? Math.max(0, Number(calcLunchMinutes) || 0)
       : 0;
@@ -1345,148 +1354,166 @@ export function TrackerScreen(props: Props) {
               })
             }
           />
-          <Pressable onPress={onPremium}>
-            <Text style={{ color: colors.accent, fontWeight: "800" }}>
-              Unlock advanced reminder rules with Premium →
-            </Text>
-          </Pressable>
+          <Text style={styles.cardMeta}>
+            Job-specific reminder rules are managed in Jobs. Basic lunch and
+            return reminders remain available on Free.
+          </Text>
         </Section>
         <Section
           title="Hours Calculator"
           subtitle="Work out hours from a target clock-out"
         >
-          <Text style={styles.cardMeta}>
-            Apply results here to update Today&apos;s Plan.
-          </Text>
-          <View style={{ flexDirection: "row", gap: 6 }}>
-            {(["forward", "reverse", "duration"] as const).map((mode) => (
-              <Pressable
-                key={mode}
-                onPress={() => setCalcMode(mode)}
+          {canCalculate ? (
+            <>
+              <Text style={styles.cardMeta}>
+                Apply results here to update Today&apos;s Plan.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 6 }}>
+                {(["forward", "reverse", "duration"] as const).map((mode) => (
+                  <Pressable
+                    key={mode}
+                    onPress={() => setCalcMode(mode)}
+                    style={{
+                      backgroundColor:
+                        calcMode === mode ? colors.accent : colors.background,
+                      borderColor: colors.border,
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      flex: 1,
+                      paddingVertical: 9,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: calcMode === mode ? "#fff7fa" : colors.muted,
+                        fontSize: 10,
+                        fontWeight: "800",
+                        textAlign: "center",
+                      }}
+                    >
+                      {mode === "forward"
+                        ? "Start → End"
+                        : mode === "reverse"
+                          ? "End → Start"
+                          : "Duration"}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              {calcMode === "forward" && (
+                <>
+                  <TimePickerField
+                    label="Start time"
+                    value={calcStart}
+                    onChange={setCalcStart}
+                  />
+                  <NumericField
+                    label="Hours to work"
+                    value={calcHours}
+                    onChange={setCalcHours}
+                  />
+                </>
+              )}
+              {calcMode === "reverse" && (
+                <>
+                  <TimePickerField
+                    label="Clock out by"
+                    value={calcTarget}
+                    onChange={setCalcTarget}
+                  />
+                  <NumericField
+                    label="Hours to work"
+                    value={calcHours}
+                    onChange={setCalcHours}
+                  />
+                </>
+              )}
+              {calcMode === "duration" && (
+                <>
+                  <TimePickerField
+                    label="Start time"
+                    value={calcStart}
+                    onChange={setCalcStart}
+                  />
+                  <TimePickerField
+                    label="End time"
+                    value={calcEnd}
+                    onChange={setCalcEnd}
+                  />
+                </>
+              )}
+              <ToggleRow
+                label="Taking lunch"
+                enabled={calcLunchEnabled}
+                onPress={() => setCalcLunchEnabled((value) => !value)}
+              />
+              {calcLunchEnabled && (
+                <NumericField
+                  label="Lunch duration (minutes)"
+                  value={calcLunchMinutes}
+                  onChange={(value) => {
+                    const parsed = Number(value);
+                    if (parsed >= 0 && parsed <= 180)
+                      setCalcLunchMinutes(value);
+                  }}
+                  keyboardType="number-pad"
+                />
+              )}
+              <Text
                 style={{
-                  backgroundColor:
-                    calcMode === mode ? colors.accent : colors.background,
-                  borderColor: colors.border,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  flex: 1,
-                  paddingVertical: 9,
+                  color: colors.accent,
+                  fontSize: 20,
+                  fontWeight: "900",
                 }}
               >
-                <Text
-                  style={{
-                    color: calcMode === mode ? "#fff7fa" : colors.muted,
-                    fontSize: 10,
-                    fontWeight: "800",
-                    textAlign: "center",
-                  }}
+                {calculatorResult}
+              </Text>
+              {confirmApply ? (
+                <View style={{ gap: 8 }}>
+                  <Text style={styles.cardMeta}>
+                    Apply this result to Today&apos;s Plan?
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 10 }}>
+                    <Pressable
+                      onPress={applyCalculator}
+                      style={[styles.button, { flex: 1 }]}
+                    >
+                      <Text style={styles.buttonText}>Confirm</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setConfirmApply(false)}
+                      style={[styles.secondaryButton, { flex: 1 }]}
+                    >
+                      <Text style={styles.secondaryButtonText}>Cancel</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={() => setConfirmApply(true)}
+                  style={styles.button}
                 >
-                  {mode === "forward"
-                    ? "Start → End"
-                    : mode === "reverse"
-                      ? "End → Start"
-                      : "Duration"}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-          {calcMode === "forward" && (
-            <>
-              <TimePickerField
-                label="Start time"
-                value={calcStart}
-                onChange={setCalcStart}
-              />
-              <NumericField
-                label="Hours to work"
-                value={calcHours}
-                onChange={setCalcHours}
-              />
+                  <Text style={styles.buttonText}>
+                    Apply to Today&apos;s Plan
+                  </Text>
+                </Pressable>
+              )}
             </>
-          )}
-          {calcMode === "reverse" && (
-            <>
-              <TimePickerField
-                label="Clock out by"
-                value={calcTarget}
-                onChange={setCalcTarget}
-              />
-              <NumericField
-                label="Hours to work"
-                value={calcHours}
-                onChange={setCalcHours}
-              />
-            </>
-          )}
-          {calcMode === "duration" && (
-            <>
-              <TimePickerField
-                label="Start time"
-                value={calcStart}
-                onChange={setCalcStart}
-              />
-              <TimePickerField
-                label="End time"
-                value={calcEnd}
-                onChange={setCalcEnd}
-              />
-            </>
-          )}
-          <ToggleRow
-            label="Taking lunch"
-            enabled={calcLunchEnabled}
-            onPress={() => setCalcLunchEnabled((value) => !value)}
-          />
-          {calcLunchEnabled && (
-            <NumericField
-              label="Lunch duration (minutes)"
-              value={calcLunchMinutes}
-              onChange={(value) => {
-                const parsed = Number(value);
-                if (parsed >= 0 && parsed <= 180) setCalcLunchMinutes(value);
-              }}
-              keyboardType="number-pad"
+          ) : (
+            <PaywallCard
+              onPress={onPremium}
+              title="Hours Calculator"
+              description="Preview Premium to calculate work hours and apply the result to Today’s Plan."
             />
           )}
-          <Text
-            style={{ color: colors.accent, fontSize: 20, fontWeight: "900" }}
-          >
-            {calculatorResult}
-          </Text>
-          {confirmApply ? (
-            <View style={{ gap: 8 }}>
-              <Text style={styles.cardMeta}>
-                Apply this result to Today&apos;s Plan?
-              </Text>
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable
-                  onPress={applyCalculator}
-                  style={[styles.button, { flex: 1 }]}
-                >
-                  <Text style={styles.buttonText}>Confirm</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setConfirmApply(false)}
-                  style={[styles.secondaryButton, { flex: 1 }]}
-                >
-                  <Text style={styles.secondaryButtonText}>Cancel</Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : (
-            <Pressable
-              onPress={() => setConfirmApply(true)}
-              style={styles.button}
-            >
-              <Text style={styles.buttonText}>Apply to Today&apos;s Plan</Text>
-            </Pressable>
-          )}
         </Section>
-        <PaywallCard
-          onPress={onPremium}
-          title="Unlock smart reminders"
-          description="Get lunch, return-to-work, and custom job reminders with Premium."
-        />
+        {!canCalculate && (
+          <PaywallCard
+            onPress={onPremium}
+            title="Explore Premium"
+            description="Add more jobs, unlock full History and advanced Pay tools. Basic tracking and reminders stay available on Free."
+          />
+        )}
       </ScrollView>
     </SafeAreaView>
   );

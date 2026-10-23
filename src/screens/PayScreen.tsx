@@ -1,3 +1,4 @@
+import { entitlementsFor } from "../services/entitlements";
 import { useEffect, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -59,6 +60,7 @@ export function PayScreen({
   onMarkPaid,
 }: Props) {
   const { colors, styles } = useThemeTokens();
+  const premium = entitlementsFor(data).advancedPay;
   const [range, setRange] = useState<Range>("last30");
   const [scope, setScope] = useState("");
   const [currency, setCurrency] = useState(data.preferences.currency);
@@ -76,11 +78,11 @@ export function PayScreen({
   } | null>(null);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    if (!data.isPremium) {
+    if (!premium) {
       setMode("payPeriod");
       setOffset(0);
     }
-  }, [data.isPremium]);
+  }, [premium]);
   useEffect(() => {
     if (!data.activeShift) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -128,17 +130,13 @@ export function PayScreen({
         offset > 0 ? addDays(period.end, 1) : addDays(period.start, -1),
         periodJob,
       )!;
-  const rangeWindow = rangeBounds(
-    data.isPremium ? range : "last7",
-    data.history,
-  );
+  const rangeWindow = rangeBounds(premium ? range : "last7", data.history);
   const bounds: Bounds =
-    mode === "custom" && data.isPremium
+    mode === "custom" && premium
       ? { start: customStart, end: customEnd }
-      : mode === "preset" && data.isPremium
+      : mode === "preset" && premium
         ? rangeBounds(range, data.history)
-        : (period ??
-          rangeBounds(data.isPremium ? range : "thisMonth", data.history));
+        : (period ?? rangeBounds(premium ? range : "thisMonth", data.history));
   const summary = financialSummary(data, bounds, jobId, code, now);
   const fmt = (value: number) =>
     data.payVisible ? money(value, code) : "•••••";
@@ -206,9 +204,9 @@ export function PayScreen({
         />
         <Choices
           options={ranges}
-          value={data.isPremium ? range : "last7"}
+          value={premium ? range : "last7"}
           onChange={(value) =>
-            data.isPremium ? setRange(value as Range) : onPremium()
+            premium ? setRange(value as Range) : onPremium()
           }
         />
         <Choices
@@ -241,7 +239,7 @@ export function PayScreen({
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>
-            {data.isPremium ? "Financial Summary" : "Current Period Pay"}
+            {premium ? "Financial Summary" : "Current Period Pay"}
           </Text>
           <Choices
             options={[
@@ -251,11 +249,11 @@ export function PayScreen({
             ]}
             value={mode}
             onChange={(value) => {
-              if (!data.isPremium && value !== "payPeriod") onPremium();
+              if (!premium && value !== "payPeriod") onPremium();
               else setMode(value);
             }}
           />
-          {mode === "custom" && data.isPremium && (
+          {mode === "custom" && premium && (
             <>
               <DateField
                 label="From"
@@ -277,9 +275,7 @@ export function PayScreen({
                     <Action
                       title="← Previous period"
                       onPress={() =>
-                        data.isPremium
-                          ? setOffset((value) => value - 1)
-                          : onPremium()
+                        premium ? setOffset((value) => value - 1) : onPremium()
                       }
                     />
                   </View>
@@ -287,9 +283,7 @@ export function PayScreen({
                     <Action
                       title="Next period →"
                       onPress={() =>
-                        data.isPremium
-                          ? setOffset((value) => value + 1)
-                          : onPremium()
+                        premium ? setOffset((value) => value + 1) : onPremium()
                       }
                     />
                   </View>
@@ -298,7 +292,7 @@ export function PayScreen({
               {!period && (
                 <Text style={styles.cardMeta}>
                   No pay schedule configured. Showing{" "}
-                  {data.isPremium
+                  {premium
                     ? ranges
                         .find((item) => item.value === range)
                         ?.label.toLowerCase()
@@ -391,7 +385,7 @@ export function PayScreen({
           title="Upcoming Paychecks"
           subtitle="Overdue, in-progress & received pay periods"
         >
-          {data.isPremium ? (
+          {premium ? (
             <Paychecks
               data={data}
               onRecord={onReceipt}
@@ -404,7 +398,7 @@ export function PayScreen({
           )}
         </PaySection>
         <PaySection
-          title={`Progress · ${data.isPremium ? ranges.find((item) => item.value === range)?.label : "Last 7 days"}`}
+          title={`Progress · ${premium ? ranges.find((item) => item.value === range)?.label : "Last 7 days"}`}
         >
           <Progress
             data={data}
@@ -417,7 +411,7 @@ export function PayScreen({
           title="Trends"
           subtitle="Earnings over time, hours worked & earnings by job"
         >
-          {data.isPremium ? (
+          {premium ? (
             <PayTrends
               data={data}
               bounds={rangeWindow}
@@ -432,7 +426,7 @@ export function PayScreen({
           title="Estimator & Deductions"
           subtitle={`${data.deductions.filter((item) => item.enabled).length} active deduction(s)`}
         >
-          {data.isPremium ? (
+          {premium ? (
             <>
               <Estimator
                 data={data}
@@ -570,7 +564,7 @@ export function PayScreen({
           Estimate only. Recorded amounts, taxes, benefits and employer policies
           can change actual take-home pay. This app is not a payroll system.
         </Text>
-        {data.isPremium && (
+        {premium && (
           <Action title="End Premium preview" onPress={onEndPreview} />
         )}
       </ScrollView>

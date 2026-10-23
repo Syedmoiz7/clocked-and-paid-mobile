@@ -11,12 +11,14 @@ export function AccountCard({
   onPassword,
   onSignIn,
   onSignOut,
+  onSetup,
 }: {
   account: MockAccount;
   onAccount: (value: MockAccount) => void;
   onPassword: (value: string) => Promise<void>;
   onSignIn: () => void;
   onSignOut: () => void;
+  onSetup: () => void;
 }) {
   const { colors, styles } = useThemeTokens();
   const [draft, setDraft] = useState(account),
@@ -137,6 +139,7 @@ export function AccountCard({
             }}
           />
           <Action title="Sign out" onPress={onSignOut} />
+          <Action title="Review name & job setup" onPress={onSetup} />
         </>
       )}
       {feedback !== "" && (

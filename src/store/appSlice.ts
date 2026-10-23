@@ -9,7 +9,18 @@ import type {
   PaySchedule,
   MockJob,
   MockAccount,
+  MockAuthFlow,
 } from "../types";
+import {
+  authDefaults,
+  canReuseStarter,
+  migrateAuth,
+  mockAccount,
+  normalizeEmail,
+  prepareOnboardingJob,
+  validDemoFlow,
+  type OnboardingJobDraft,
+} from "../features/auth/model";
 import {
   preferenceDefaults,
   validateSettings,
@@ -45,6 +56,7 @@ function applyJobDefaults(state: AppState, job: MockJob) {
 export const initialAppState: AppState = {
   preferences: preferenceDefaults(),
   account: { mode: "guest", name: "", email: "" },
+  auth: authDefaults(),
   activeShift: null,
   extraShifts: [],
   history: [],
@@ -105,10 +117,175 @@ export const initialAppState: AppState = {
   jobReminderAcknowledgements: {},
 };
 
+export function resetWorkspaceState(state: AppState): AppState {
+  return {
+    ...initialAppState,
+    account: state.account,
+    isPremium: state.isPremium,
+    auth: {
+      ...state.auth,
+      pending: null,
+      onboarding: {
+        ...state.auth.onboarding,
+        createdJobIds: [],
+        lastSavedJobId: null,
+      },
+    },
+  };
+}
+
 const appSlice = createSlice({
   name: "app",
   initialState: initialAppState,
   reducers: {
+    enterGuest: (state) => {
+      if (state.account.mode === "mock")
+        state.auth.lastProfile = {
+          name: state.account.name,
+          email: state.account.email,
+        };
+      state.account = { mode: "guest", name: "", email: "" };
+      state.auth.session = "guest";
+      state.auth.pending = null;
+    },
+    enterMockSession: (state, action: PayloadAction<MockAccount>) => {
+      if (!action.payload.email.trim()) return;
+      const same =
+        normalizeEmail(state.auth.lastProfile?.email ?? "") ===
+        normalizeEmail(action.payload.email);
+      const converting = state.auth.session === "guest";
+      state.account = mockAccount(
+        action.payload.email,
+        action.payload.name || (same ? state.auth.lastProfile?.name : ""),
+      );
+      state.auth.lastProfile = {
+        name: state.account.name,
+        email: state.account.email,
+      };
+      state.auth.session = "mock";
+      state.auth.pending = null;
+      if (!same) state.auth.onboarding = authDefaults().onboarding;
+      if (converting) state.auth.guestConversionAt = new Date().toISOString();
+    },
+    signOutMockSession: (state) => {
+      if (state.account.mode === "mock")
+        state.auth.lastProfile = {
+          name: state.account.name,
+          email: state.account.email,
+        };
+      state.account = { mode: "guest", name: "", email: "" };
+      state.auth.session = "signed-out";
+      state.auth.pending = null;
+    },
+    prepareMockFlow: (state, action: PayloadAction<MockAuthFlow>) => {
+      const flow = action.payload;
+      if (
+        !flow.id ||
+        !flow.email.trim() ||
+        !["confirmation", "recovery"].includes(flow.kind) ||
+        !Number.isFinite(flow.createdAt)
+      )
+        return;
+      state.auth.pending = {
+        id: flow.id,
+        kind: flow.kind,
+        email: normalizeEmail(flow.email),
+        name: flow.name.trim(),
+        createdAt: flow.createdAt,
+      };
+    },
+    clearMockFlow: (state) => {
+      state.auth.pending = null;
+    },
+    completeMockConfirmation: (
+      state,
+      action: PayloadAction<{ id: string; now: number }>,
+    ) => {
+      const flow = state.auth.pending;
+      if (
+        !validDemoFlow(
+          flow,
+          { demo: "1", flow: "confirmation", id: action.payload.id },
+          action.payload.now,
+        )
+      )
+        return;
+      const same =
+        normalizeEmail(state.auth.lastProfile?.email ?? "") === flow!.email;
+      if (state.auth.session === "guest")
+        state.auth.guestConversionAt = new Date().toISOString();
+      state.account = mockAccount(flow!.email, flow!.name);
+      state.auth.lastProfile = {
+        name: state.account.name,
+        email: state.account.email,
+      };
+      state.auth.session = "mock";
+      state.auth.pending = null;
+      if (!same) state.auth.onboarding = authDefaults().onboarding;
+    },
+    completeMockRecovery: (
+      state,
+      action: PayloadAction<{ id: string; now: number }>,
+    ) => {
+      if (
+        validDemoFlow(
+          state.auth.pending,
+          { demo: "1", flow: "recovery", id: action.payload.id },
+          action.payload.now,
+        )
+      )
+        state.auth.pending = null;
+    },
+    advanceOnboarding: (state, action: PayloadAction<string>) => {
+      if (state.auth.session !== "mock" || !action.payload.trim()) return;
+      state.account.name = action.payload.trim();
+      state.auth.lastProfile = {
+        name: state.account.name,
+        email: state.account.email,
+      };
+      state.auth.onboarding.step = 2;
+    },
+    backOnboarding: (state) => {
+      state.auth.onboarding.step = 1;
+    },
+    clearOnboardingSuccess: (state) => {
+      state.auth.onboarding.lastSavedJobId = null;
+    },
+    saveOnboardingJob: (
+      state,
+      action: PayloadAction<{ draft: OnboardingJobDraft; id: string }>,
+    ) => {
+      if (state.auth.session !== "mock" || state.auth.onboarding.lastSavedJobId)
+        return;
+      const reusable = canReuseStarter(state);
+      const result = prepareOnboardingJob(
+        state,
+        action.payload.draft,
+        action.payload.id,
+      );
+      if (
+        "error" in result ||
+        (state.jobs.some((job) => job.id === result.job.id) && !reusable)
+      )
+        return;
+      if (reusable) state.jobs = [result.job];
+      else state.jobs.push(result.job);
+      if (result.job.isDefault && !state.activeShift)
+        applyJobDefaults(state, result.job);
+      state.auth.onboarding.createdJobIds.push(result.job.id);
+      state.auth.onboarding.lastSavedJobId = result.job.id;
+    },
+    finishOnboarding: (state, action: PayloadAction<string>) => {
+      if (state.auth.session !== "mock") return;
+      if (action.payload.trim()) state.account.name = action.payload.trim();
+      state.auth.lastProfile = {
+        name: state.account.name,
+        email: state.account.email,
+      };
+      state.auth.onboarding.complete = true;
+      state.auth.onboarding.step = 1;
+      state.auth.onboarding.lastSavedJobId = null;
+    },
     saveSettings: (state, action: PayloadAction<SettingsDraft>) => {
       if (validateSettings(action.payload)) return;
       const { preferences, plan, breakIncluded } = action.payload;
@@ -146,6 +323,11 @@ const appSlice = createSlice({
     },
     setMockAccount: (state, action: PayloadAction<MockAccount>) => {
       state.account = action.payload;
+      if (action.payload.mode === "mock")
+        state.auth.lastProfile = {
+          name: action.payload.name,
+          email: action.payload.email,
+        };
     },
     restoreData: (
       state,
@@ -162,11 +344,7 @@ const appSlice = createSlice({
         action.payload.includeSettings,
       );
     },
-    resetLocalData: (state) => ({
-      ...initialAppState,
-      isPremium: state.isPremium,
-      account: state.account,
-    }),
+    resetLocalData: (state) => resetWorkspaceState(state),
     hydrate: (_state, action: PayloadAction<Partial<AppState>>) => {
       const savedJobs = action.payload.jobs;
       const hasLegacyPlaceholderJobs = savedJobs?.some(
@@ -196,6 +374,7 @@ const appSlice = createSlice({
       return {
         ...initialAppState,
         ...action.payload,
+        auth: migrateAuth(action.payload),
         payVisible:
           action.payload.payVisible ??
           (action.payload.preferences
@@ -211,7 +390,17 @@ const appSlice = createSlice({
             ...action.payload.preferences?.defaultReminders,
           },
         },
-        account: { ...initialAppState.account, ...action.payload.account },
+        account: {
+          mode: action.payload.account?.mode === "mock" ? "mock" : "guest",
+          name:
+            typeof action.payload.account?.name === "string"
+              ? action.payload.account.name
+              : "",
+          email:
+            typeof action.payload.account?.email === "string"
+              ? action.payload.account.email
+              : "",
+        },
         activeShift: isOrphaned ? null : savedActiveShift,
         extraShifts: action.payload.extraShifts ?? [],
         orphanedShift: isOrphaned
@@ -638,6 +827,18 @@ const appSlice = createSlice({
 });
 
 export const {
+  enterGuest,
+  enterMockSession,
+  signOutMockSession,
+  prepareMockFlow,
+  clearMockFlow,
+  completeMockConfirmation,
+  completeMockRecovery,
+  advanceOnboarding,
+  backOnboarding,
+  clearOnboardingSuccess,
+  saveOnboardingJob,
+  finishOnboarding,
   saveSettings,
   setThemeHue,
   setMockAccount,

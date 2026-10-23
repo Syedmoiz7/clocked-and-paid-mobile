@@ -25,6 +25,7 @@ export type SettingsActions = DataActions & {
   onPassword: (password: string) => Promise<void>;
   onSignIn: () => void;
   onSignOut: () => void;
+  onSetup: () => void;
   onPremium: () => void;
   onEndPreview: () => void;
 };
@@ -98,6 +99,7 @@ export function SettingsScreen({
             onPassword={actions.onPassword}
             onSignIn={actions.onSignIn}
             onSignOut={actions.onSignOut}
+            onSetup={actions.onSetup}
           />
         ) : (
           <>

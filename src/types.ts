@@ -151,6 +151,7 @@ export type ReminderSettings = {
 export type AppState = {
   preferences: AppPreferences;
   account: MockAccount;
+  auth: MockAuthState;
   activeShift: Shift | null;
   extraShifts: Shift[];
   history: Shift[];
@@ -179,6 +180,25 @@ export type MockAccount = {
   mode: "guest" | "mock";
   name: string;
   email: string;
+};
+export type MockAuthFlow = {
+  id: string;
+  kind: "confirmation" | "recovery";
+  email: string;
+  name: string;
+  createdAt: number;
+};
+export type MockAuthState = {
+  session: "signed-out" | "guest" | "mock";
+  lastProfile: { name: string; email: string } | null;
+  pending: MockAuthFlow | null;
+  onboarding: {
+    complete: boolean;
+    step: 1 | 2;
+    createdJobIds: string[];
+    lastSavedJobId: string | null;
+  };
+  guestConversionAt: string | null;
 };
 export type AppPreferences = {
   enableManualEditing: boolean;

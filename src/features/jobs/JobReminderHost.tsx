@@ -127,10 +127,14 @@ export function JobReminderHost() {
         : [];
     void reconcileJobNotifications(
       times.map(({ alert, at }) => ({
-        name: privacyConfigured ? "Clocked & Paid reminder" : alert.name,
-        message: privacyConfigured
-          ? "Unlock the app to view your work reminder."
-          : alert.message,
+        name:
+          privacyConfigured || data.auth.session === "signed-out"
+            ? "Clocked & Paid reminder"
+            : alert.name,
+        message:
+          privacyConfigured || data.auth.session === "signed-out"
+            ? "Unlock the app to view your work reminder."
+            : alert.message,
         at,
         sound: alert.settings.sound,
       })),
@@ -143,8 +147,9 @@ export function JobReminderHost() {
     data.notificationPermission,
     queueRevision,
     privacyConfigured,
+    data.auth.session,
   ]);
-  if (!current || locked) return null;
+  if (!current || locked || data.auth.session === "signed-out") return null;
   const job = data.jobs.find((item) => item.id === current.jobId);
   const content = (
     <View

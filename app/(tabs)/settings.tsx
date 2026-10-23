@@ -1,14 +1,15 @@
 import { Alert } from "react-native";
 import { router } from "expo-router";
-import * as Crypto from "expo-crypto";
-import * as SecureStore from "expo-secure-store";
+import { mockAuth } from "../../src/services/mockAuth";
+import { useUpgrade } from "../../src/features/auth/useUpgrade";
 import * as Notifications from "expo-notifications";
 import { SettingsScreen } from "../../src/screens/SettingsScreen";
 import { entitlementsFor } from "../../src/services/entitlements";
 import { settingsDraft } from "../../src/features/settings/model";
 import { useAppDispatch, useAppSelector } from "../../src/store/hooks";
 import {
-  initialAppState,
+  resetWorkspaceState,
+  signOutMockSession,
   resetLocalData,
   restoreData,
   saveSettings,
@@ -35,6 +36,7 @@ import {
 export default function SettingsRoute() {
   const data = useAppSelector((state) => state.app);
   const dispatch = useAppDispatch();
+  const onPremium = useUpgrade(undefined, "/settings");
   const requirePremium = () => {
     if (!entitlementsFor(data).backupRestore)
       throw new Error("Enable mock Premium preview to use this tool.");
@@ -49,19 +51,10 @@ export default function SettingsRoute() {
             dispatch(setThemeHue(hue));
         },
         onAccount: (account) => dispatch(setMockAccount(account)),
-        onPassword: async (password) => {
-          const salt = Crypto.randomUUID();
-          const hash = await Crypto.digestStringAsync(
-            Crypto.CryptoDigestAlgorithm.SHA256,
-            `${salt}:${password}`,
-          );
-          await SecureStore.setItemAsync(
-            "clocked-paid.mock-password.v1",
-            JSON.stringify({ salt, hash }),
-            { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
-          );
-        },
+        onPassword: (password) => mockAuth.setPassword(password, password),
         onSignIn: () => router.push("/auth"),
+        onSetup: () =>
+          router.push({ pathname: "/onboarding", params: { review: "1" } }),
         onSignOut: () =>
           Alert.alert(
             "Sign out of mock account?",
@@ -71,26 +64,13 @@ export default function SettingsRoute() {
               {
                 text: "Sign out",
                 onPress: () => {
-                  dispatch(
-                    setMockAccount({ mode: "guest", name: "", email: "" }),
-                  );
+                  dispatch(signOutMockSession());
                   router.replace("/auth");
                 },
               },
             ],
           ),
-        onPremium: () =>
-          Alert.alert(
-            "Preview Premium",
-            "Enable local demo entitlements. No purchase or charge is made.",
-            [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Start preview",
-                onPress: () => dispatch(setPremiumPreview(true)),
-              },
-            ],
-          ),
+        onPremium,
         onEndPreview: () => dispatch(setPremiumPreview(false)),
         onExport: async (format) => {
           requirePremium();
@@ -133,11 +113,7 @@ export default function SettingsRoute() {
           };
         },
         onReset: async () => {
-          const next = {
-            ...initialAppState,
-            account: data.account,
-            isPremium: data.isPremium,
-          };
+          const next = resetWorkspaceState(data);
           await Notifications.cancelAllScheduledNotificationsAsync();
           await resetStoredWorkspace(next);
           dispatch(resetLocalData());
