@@ -187,7 +187,12 @@ export function EntryForm({
         onChange={(jobId) => update({ jobId: jobId || null })}
         options={[
           { value: "", label: "No job assigned" },
-          ...jobs.map((job) => ({ value: job.id, label: job.name })),
+          ...jobs
+            .filter((job) => !job.archived || job.id === draft.jobId)
+            .map((job) => ({
+              value: job.id,
+              label: job.archived ? `${job.name} (removed)` : job.name,
+            })),
         ]}
       />
       <Field

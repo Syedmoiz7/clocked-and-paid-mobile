@@ -340,7 +340,10 @@ export function ReceiptForm({
 }) {
   const estimate = paycheckDraft(data, jobId, initialBounds);
   const [bounds, setBounds] = useState(initialBounds);
-  const [date, setDate] = useState(localDate());
+  const [date, setDate] = useState(() => {
+    const next = data.jobs.find((job) => job.id === jobId)?.nextPayDate;
+    return next && next > localDate() ? next : addDays(initialBounds.end, 7);
+  });
   const [gross, setGross] = useState(estimate.gross.toFixed(2));
   const [deductions, setDeductions] = useState(estimate.deductions.toFixed(2));
   const [notes, setNotes] = useState("");

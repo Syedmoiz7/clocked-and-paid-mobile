@@ -7,7 +7,32 @@ import type {
   Deduction,
   MockPaycheck,
   PaySchedule,
+  MockJob,
 } from "../types";
+import {
+  jobEditError,
+  jobPlan,
+  jobReferenced,
+  normalizeJob,
+  validateJob,
+} from "../features/jobs/model";
+
+function applyJobDefaults(state: AppState, job: MockJob) {
+  state.selectedJobId = job.id;
+  state.todayPlan = jobPlan(job, state.defaultPlan);
+  if (job.reminderSettings) {
+    const settings = job.reminderSettings;
+    state.reminders = {
+      ...state.reminders,
+      lunchReminder: settings.lunchMode !== "off",
+      returnReminder: settings.returnReminder,
+      reminderSnoozeMinutes: settings.snoozeMinutes,
+      reminderSound: settings.sound,
+      reminderOverlay: settings.overlay,
+      reminderTabFlash: settings.indicator,
+    };
+  }
+}
 
 export const initialAppState: AppState = {
   activeShift: null,
@@ -36,7 +61,13 @@ export const initialAppState: AppState = {
     reminderTabFlash: true,
   },
   jobs: [
-    { id: "default", name: "Default job", hourlyRate: 24, color: "#d65c90" },
+    {
+      id: "default",
+      name: "Default job",
+      hourlyRate: 24,
+      color: "#d65c90",
+      isDefault: true,
+    },
   ],
   selectedJobId: "default",
   deductionRate: 0.1,
@@ -61,6 +92,7 @@ export const initialAppState: AppState = {
   paychecks: [],
   payVisible: true,
   paySchedules: {},
+  jobReminderAcknowledgements: {},
 };
 
 const appSlice = createSlice({
@@ -77,14 +109,16 @@ const appSlice = createSlice({
           job.name === "Side project",
       );
       const jobs =
-        hasLegacyPlaceholderJobs || !savedJobs?.length
+        hasLegacyPlaceholderJobs || !savedJobs
           ? initialAppState.jobs
           : savedJobs;
       const selectedJobId = jobs.some(
-        (job) => job.id === action.payload.selectedJobId,
+        (job) => !job.archived && job.id === action.payload.selectedJobId,
       )
         ? action.payload.selectedJobId!
-        : (jobs[0]?.id ?? initialAppState.selectedJobId);
+        : (jobs.find((job) => !job.archived && job.isDefault)?.id ??
+          jobs.find((job) => !job.archived)?.id ??
+          "");
       const savedActiveShift = action.payload.activeShift ?? null;
       const isOrphaned = Boolean(
         savedActiveShift &&
@@ -389,13 +423,95 @@ const appSlice = createSlice({
       state.defaultPlan = { ...state.todayPlan };
     },
     resetTodayPlan: (state) => {
-      state.todayPlan = { ...state.defaultPlan };
+      const job = state.jobs.find(
+        (item) => item.id === (state.activeShift?.jobId ?? state.selectedJobId),
+      );
+      state.todayPlan = job
+        ? jobPlan(job, state.defaultPlan)
+        : { ...state.defaultPlan };
+    },
+    upsertJob: (state, action: PayloadAction<MockJob>) => {
+      if (validateJob(action.payload) || jobEditError(state, action.payload))
+        return;
+      const job = normalizeJob(action.payload);
+      const existing = state.jobs.find((item) => item.id === job.id);
+      const oldSchedule = existing
+        ? `${existing.payFrequency}:${existing.payPeriodStart}:${existing.nextPayDate}`
+        : "";
+      // A running shift keeps its current plan; selecting a different job is disabled until clock-out.
+      const makeDefault =
+        !state.jobs.some((item) => !item.archived) ||
+        job.isDefault ||
+        existing?.isDefault;
+      if (makeDefault)
+        state.jobs.forEach((item) => {
+          item.isDefault = item.id === job.id;
+        });
+      job.isDefault = Boolean(makeDefault);
+      if (existing) Object.assign(existing, job);
+      else state.jobs.push(job);
+      if (
+        existing &&
+        oldSchedule !==
+          `${job.payFrequency}:${job.payPeriodStart}:${job.nextPayDate}`
+      )
+        delete state.paySchedules[job.id];
+      if (
+        !state.activeShift &&
+        (job.isDefault ||
+          state.selectedJobId === job.id ||
+          !state.selectedJobId)
+      ) {
+        applyJobDefaults(state, job);
+      }
+    },
+    acknowledgeJobReminder: (
+      state,
+      action: PayloadAction<{ key: string; nextAt: number }>,
+    ) => {
+      state.jobReminderAcknowledgements[action.payload.key] =
+        action.payload.nextAt;
+    },
+    setDefaultJob: (state, action: PayloadAction<string>) => {
+      const job = state.jobs.find(
+        (item) => item.id === action.payload && !item.archived,
+      );
+      if (!job || state.activeShift) return;
+      state.jobs.forEach((item) => {
+        item.isDefault = item.id === job.id;
+      });
+      applyJobDefaults(state, job);
+    },
+    removeJob: (state, action: PayloadAction<string>) => {
+      const id = action.payload;
+      const job = state.jobs.find((item) => item.id === id);
+      if (
+        !job ||
+        state.activeShift?.jobId === id ||
+        state.extraShifts.some((item) => item.jobId === id)
+      )
+        return;
+      if (jobReferenced(state, id)) {
+        job.archived = true;
+        job.isDefault = false;
+      } else state.jobs = state.jobs.filter((item) => item.id !== id);
+      delete state.paySchedules[id];
+      const remaining = state.jobs.filter((item) => !item.archived);
+      if (!remaining.some((item) => item.isDefault) && remaining[0])
+        remaining[0].isDefault = true;
+      if (state.selectedJobId === id) {
+        const next = remaining.find((item) => item.isDefault) ?? remaining[0];
+        state.selectedJobId = next?.id ?? "";
+        if (next && !state.activeShift) applyJobDefaults(state, next);
+      }
     },
     selectJob: (state, action: PayloadAction<string>) => {
-      const job = state.jobs.find((item) => item.id === action.payload);
+      if (state.activeShift) return;
+      const job = state.jobs.find(
+        (item) => item.id === action.payload && !item.archived,
+      );
       if (job) {
-        state.selectedJobId = job.id;
-        state.todayPlan.hourlyRate = job.hourlyRate;
+        applyJobDefaults(state, job);
       }
     },
     updateReminders: (
@@ -403,6 +519,28 @@ const appSlice = createSlice({
       action: PayloadAction<Partial<ReminderSettings>>,
     ) => {
       state.reminders = { ...state.reminders, ...action.payload };
+      const settings = state.jobs.find(
+        (job) => job.id === (state.activeShift?.jobId ?? state.selectedJobId),
+      )?.reminderSettings;
+      if (settings) {
+        const changes = action.payload;
+        if (changes.lunchReminder !== undefined)
+          settings.lunchMode = changes.lunchReminder
+            ? settings.lunchMode === "off"
+              ? "relative"
+              : settings.lunchMode
+            : "off";
+        if (changes.returnReminder !== undefined)
+          settings.returnReminder = changes.returnReminder;
+        if (changes.reminderSnoozeMinutes !== undefined)
+          settings.snoozeMinutes = changes.reminderSnoozeMinutes;
+        if (changes.reminderSound !== undefined)
+          settings.sound = changes.reminderSound;
+        if (changes.reminderOverlay !== undefined)
+          settings.overlay = changes.reminderOverlay;
+        if (changes.reminderTabFlash !== undefined)
+          settings.indicator = changes.reminderTabFlash;
+      }
     },
   },
 });
@@ -447,6 +585,10 @@ export const {
   savePaySchedule,
   upsertDeduction,
   removeDeduction,
+  upsertJob,
+  setDefaultJob,
+  removeJob,
+  acknowledgeJobReminder,
   recordPaycheck,
   deletePaycheck,
 } = appSlice.actions;

@@ -1,4 +1,4 @@
-export type TabKey = "tracker" | "history" | "pay" | "settings";
+export type TabKey = "tracker" | "history" | "pay" | "jobs" | "settings";
 
 export type Shift = {
   id: string;
@@ -62,6 +62,40 @@ export type MockJob = {
   payDelayDays?: number;
   overtimeThreshold?: number;
   overtimeMultiplier?: number;
+  title?: string;
+  notes?: string;
+  isDefault?: boolean;
+  archived?: boolean;
+  lunchMinutes?: number;
+  lunchEnabled?: boolean;
+  enableTips?: boolean;
+  reminderSettings?: JobReminderSettings;
+  createdAt?: string;
+};
+
+export type CustomReminder = {
+  id: string;
+  name: string;
+  message: string;
+  enabled: boolean;
+  trigger: "after-clock-in" | "after-lunch-start" | "at-time";
+  offsetMinutes: number;
+  atTime: string;
+  repeatMinutes: number;
+  priority: "low" | "medium" | "high";
+};
+
+export type JobReminderSettings = {
+  lunchMode: "off" | "relative" | "fixed";
+  lunchHours: number;
+  lunchTime: string;
+  returnReminder: boolean;
+  repeatMinutes: number;
+  snoozeMinutes: number;
+  sound: boolean;
+  indicator: boolean;
+  overlay: boolean;
+  custom: CustomReminder[];
 };
 
 export type MockPaycheck = {
@@ -136,4 +170,5 @@ export type AppState = {
   paychecks: MockPaycheck[];
   payVisible: boolean;
   paySchedules: Record<string, PaySchedule>;
+  jobReminderAcknowledgements: Record<string, number>;
 };

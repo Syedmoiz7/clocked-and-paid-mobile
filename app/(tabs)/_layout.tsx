@@ -6,6 +6,7 @@ const tabs = [
   { name: "tracker", title: "Tracker", icon: "◷" },
   { name: "history", title: "History", icon: "▤" },
   { name: "pay", title: "Pay", icon: "$" },
+  { name: "jobs", title: "Jobs", icon: "▣" },
   { name: "settings", title: "Settings", icon: "⚙" },
 ] as const;
 

@@ -3,6 +3,7 @@ import { AppLoading } from "../components/AppLoading";
 import { loadAppState, saveAppState } from "../services/storage";
 import { hydrate } from "../store/appSlice";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
+import { JobReminderHost } from "../features/jobs/JobReminderHost";
 
 export function AppBootstrap({ children }: PropsWithChildren) {
   const dispatch = useAppDispatch();
@@ -30,5 +31,12 @@ export function AppBootstrap({ children }: PropsWithChildren) {
     if (ready) void saveAppState(appState);
   }, [appState, ready]);
 
-  return ready ? children : <AppLoading />;
+  return ready ? (
+    <>
+      {children}
+      <JobReminderHost />
+    </>
+  ) : (
+    <AppLoading />
+  );
 }
