@@ -28,6 +28,10 @@ import {
 } from "../features/settings/model";
 import { applyImport, type ImportData } from "../features/settings/backup";
 import { localDate, validDate } from "../utils/dateOnly";
+import {
+  preserveWorkspacePricing,
+  sameValue,
+} from "../features/settings/drafts";
 import { paymentStatus, selectable } from "../features/history/model";
 import { canResume } from "../features/history/summary";
 import {
@@ -144,6 +148,8 @@ export const initialAppState: AppState = {
 export function resetWorkspaceState(state: AppState): AppState {
   return {
     ...initialAppState,
+    jobs: [],
+    selectedJobId: "",
     account: state.account,
     isPremium: state.isPremium,
     auth: {
@@ -313,6 +319,19 @@ const appSlice = createSlice({
     saveSettings: (state, action: PayloadAction<SettingsDraft>) => {
       if (validateSettings(action.payload)) return;
       const { preferences, plan, breakIncluded } = action.payload;
+      const previous = state.defaultPlan;
+      const previousPreferences = state.preferences;
+      const selected = state.jobs.find(
+        (item) => item.id === state.selectedJobId && !item.archived,
+      );
+      const before = selected ? jobPlan(selected, previous) : previous;
+      if (
+        previousPreferences.currency !== preferences.currency ||
+        previous.hourlyRate !== plan.hourlyRate ||
+        previous.overtimeThreshold !== plan.overtimeThreshold ||
+        previous.overtimeMultiplier !== plan.overtimeMultiplier
+      )
+        Object.assign(state, preserveWorkspacePricing(state));
       const privacyChanged =
         preferences.payHiddenByDefault !== state.preferences.payHiddenByDefault;
       state.preferences = preferences;
@@ -320,22 +339,51 @@ const appSlice = createSlice({
       state.hourlyRate = plan.hourlyRate;
       state.breakIncludedInRemaining = breakIncluded;
       if (privacyChanged) state.payVisible = !preferences.payHiddenByDefault;
-      if (!state.activeShift) {
-        const job = state.jobs.find((item) => item.id === state.selectedJobId);
-        state.todayPlan = job ? jobPlan(job, plan) : plan;
-      } else state.todayPlan.timerDirection = plan.timerDirection;
-      const settings =
-        state.jobs.find((item) => item.id === state.selectedJobId)
-          ?.reminderSettings ?? preferences.defaultReminders;
-      state.reminders = {
-        ...state.reminders,
-        lunchReminder: settings.lunchMode !== "off",
-        returnReminder: settings.returnReminder,
-        reminderSound: settings.sound,
-        reminderOverlay: settings.overlay,
-        reminderTabFlash: settings.indicator,
-        reminderSnoozeMinutes: settings.snoozeMinutes,
-      };
+      if (!workInProgress(state)) {
+        const after = selected ? jobPlan(selected, plan) : plan;
+        let changes: Partial<TodayPlan> = {};
+        for (const key of [
+          "plannedHours",
+          "hourlyRate",
+          "overtimeThreshold",
+          "overtimeMultiplier",
+          "lunchEnabled",
+          "lunchMinutes",
+        ] as const)
+          if (
+            before[key] !== after[key] &&
+            state.todayPlan[key] === before[key]
+          )
+            changes = { ...changes, [key]: after[key] };
+        state.todayPlan =
+          "lunchEnabled" in changes || "lunchMinutes" in changes
+            ? (planChanges(state.todayPlan, changes, null) ?? {
+                ...state.todayPlan,
+                ...changes,
+              })
+            : { ...state.todayPlan, ...changes };
+      }
+      if (previous.timerDirection !== plan.timerDirection)
+        state.todayPlan.timerDirection = plan.timerDirection;
+      if (
+        !sameValue(
+          previousPreferences.defaultReminders,
+          preferences.defaultReminders,
+        )
+      ) {
+        const job = state.jobs.find(
+          (item) =>
+            item.id === (state.activeShift?.jobId ?? state.selectedJobId),
+        );
+        if (!job?.reminderSettings)
+          applyJobReminderDefaults(state, {
+            id: "settings",
+            name: "Defaults",
+            hourlyRate: plan.hourlyRate,
+            color: "#d65c90",
+            reminderSettings: preferences.defaultReminders,
+          });
+      }
     },
     setThemeHue: (state, action: PayloadAction<number>) => {
       const draft = {
@@ -400,10 +448,9 @@ const appSlice = createSlice({
         ...action.payload,
         auth: migrateAuth(action.payload),
         payVisible:
-          action.payload.payVisible ??
-          (action.payload.preferences
+          action.payload.preferences?.payHiddenByDefault !== undefined
             ? !action.payload.preferences.payHiddenByDefault
-            : true),
+            : (action.payload.payVisible ?? true),
         preferences: {
           ...preferenceDefaults(),
           payHiddenByDefault:

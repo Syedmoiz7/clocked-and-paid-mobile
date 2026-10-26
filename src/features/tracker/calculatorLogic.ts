@@ -84,7 +84,10 @@ export function calculatorPay(
       (!item.jobId || item.jobId === job?.id) &&
       (!item.applicableFromDate || item.applicableFromDate <= date) &&
       (!item.applicableToDate || item.applicableToDate >= date) &&
-      (item.jobId || item.isPercentage || currency === globalCurrency),
+      (item.isPercentage ||
+        (item.currency ??
+          (item.jobId ? (job?.currency ?? globalCurrency) : globalCurrency)) ===
+          currency),
   );
   const total = applicable.reduce(
     (sum, item) =>

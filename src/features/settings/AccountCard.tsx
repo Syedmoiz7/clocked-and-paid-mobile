@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { Action, Field } from "../../components/FormControls";
 import { useThemeTokens } from "../../providers/ThemeProvider";
 import type { MockAccount } from "../../types";
-import { validateAccount, validatePassword } from "./model";
+import { rebaseAccountDraft, validateAccount, validatePassword } from "./model";
 
 export function AccountCard({
   account,
+  saving,
   onAccount,
   onPassword,
   onSignIn,
@@ -14,10 +15,13 @@ export function AccountCard({
   onSetup,
 }: {
   account: MockAccount;
-  onAccount: (value: MockAccount) => void;
+  saving: boolean;
+  onAccount: (
+    value: Partial<Pick<MockAccount, "name" | "email">>,
+  ) => Promise<string | null>;
   onPassword: (value: string) => Promise<void>;
   onSignIn: () => void;
-  onSignOut: () => void;
+  onSignOut: (hasDrafts: boolean) => void;
   onSetup: () => void;
 }) {
   const { colors, styles } = useThemeTokens();
@@ -27,9 +31,42 @@ export function AccountCard({
   const [feedback, setFeedback] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const previous = useRef(account),
+    pending = useRef(false);
   useEffect(() => {
-    setDraft(account);
+    const old = previous.current;
+    previous.current = account;
+    setDraft((value) => rebaseAccountDraft(value, old, account));
   }, [account]);
+  const run = async (
+    operation: () => Promise<string | null | void>,
+    message: string,
+  ) => {
+    if (pending.current || saving) return false;
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    setFeedback("");
+    try {
+      const error = await operation();
+      if (error) {
+        setError(error);
+        return false;
+      }
+      setFeedback(message);
+      return true;
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Could not save on this device. Your inputs are still here.",
+      );
+      return false;
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  };
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Account</Text>
@@ -55,10 +92,16 @@ export function AccountCard({
           />
           <Action
             title="Save profile (mock)"
+            disabled={busy || saving || draft.name.trim() === account.name}
             onPress={() => {
-              onAccount({ ...account, name: draft.name.trim() });
-              setError("");
-              setFeedback("Local mock profile updated.");
+              if (!draft.name.trim()) {
+                setError("Enter a display name.");
+                return;
+              }
+              void run(
+                () => onAccount({ name: draft.name.trim() }),
+                "Local mock profile saved on this device.",
+              );
             }}
           />
           <Text style={[styles.cardTitle, { marginTop: 18 }]}>
@@ -74,6 +117,7 @@ export function AccountCard({
           />
           <Action
             title="Update email (mock)"
+            disabled={busy || saving || draft.email.trim() === account.email}
             onPress={() => {
               const error = validateAccount({
                 ...account,
@@ -84,13 +128,9 @@ export function AccountCard({
                 setError(error);
                 return;
               }
-              onAccount({
-                ...account,
-                email: draft.email.trim(),
-              });
-              setError("");
-              setFeedback(
-                "Local mock profile updated. No verification email was sent.",
+              void run(
+                () => onAccount({ email: draft.email.trim() }),
+                "Local email saved. No verification email was sent.",
               );
             }}
           />
@@ -115,31 +155,42 @@ export function AccountCard({
           />
           <Action
             title={busy ? "Updating…" : "Update password (mock)"}
-            disabled={busy}
+            disabled={busy || saving}
             onPress={() => {
               const error = validatePassword(password, confirmation);
               if (error) {
                 setError(error);
                 return;
               }
-              setBusy(true);
-              void onPassword(password)
-                .then(() => {
-                  setPassword("");
-                  setConfirmation("");
-                  setError("");
-                  setFeedback(
-                    "Mock password updated securely on this device. No server credential was changed.",
-                  );
-                })
-                .catch(() =>
-                  setError("Could not save the mock password securely."),
-                )
-                .finally(() => setBusy(false));
+              void run(async () => {
+                await onPassword(password);
+              }, "Mock password saved securely on this device. No server credential changed.").then(
+                (saved) => {
+                  if (saved) {
+                    setPassword("");
+                    setConfirmation("");
+                  }
+                },
+              );
             }}
           />
-          <Action title="Sign out" onPress={onSignOut} />
-          <Action title="Review name & job setup" onPress={onSetup} />
+          <Action
+            title="Sign out"
+            disabled={busy || saving}
+            onPress={() =>
+              onSignOut(
+                draft.name.trim() !== account.name ||
+                  draft.email.trim() !== account.email ||
+                  password !== "" ||
+                  confirmation !== "",
+              )
+            }
+          />
+          <Action
+            title="Review name & job setup"
+            disabled={busy || saving}
+            onPress={onSetup}
+          />
         </>
       )}
       {feedback !== "" && (

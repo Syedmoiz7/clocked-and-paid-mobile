@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Text, View } from "react-native";
 import { Action, Choices, Field, Toggle } from "../../components/FormControls";
 import { useThemeTokens } from "../../providers/ThemeProvider";
@@ -6,6 +6,9 @@ import type { AppState } from "../../types";
 import type { ImportData } from "./backup";
 import type { SettingsDraft } from "./model";
 import { entitlementsFor } from "../../services/entitlements";
+import { FormModal } from "../../components/FormModal";
+import { workInProgress } from "../jobs/model";
+import { importImpact } from "./importImpact";
 
 export type RecoveryInfo = {
   imported: ImportData;
@@ -19,7 +22,8 @@ export type DataActions = {
     data: ImportData,
     mode: "merge" | "replace",
     settings: boolean,
-  ) => Promise<void>;
+  ) => Promise<SettingsDraft>;
+  onRecover: (scan: RecoveryInfo) => Promise<void>;
   onScan: () => Promise<RecoveryInfo | null>;
   onReset: () => Promise<SettingsDraft>;
 };
@@ -27,24 +31,44 @@ export function DataCards({
   data,
   actions,
   onPremium,
+  blocked,
+  unsavedPreferences,
 }: {
   data: AppState;
   actions: DataActions;
   onPremium: () => void;
+  blocked: boolean;
+  unsavedPreferences: boolean;
 }) {
   const { colors, styles } = useThemeTokens();
   const entitlements = entitlementsFor(data);
   const [pending, setPending] = useState<ImportData | null>(null),
     [mode, setMode] = useState<"merge" | "replace">("merge"),
-    [includeSettings, setIncludeSettings] = useState(true);
+    [includeSettings, setIncludeSettings] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const operationPending = useRef(false);
   const [scan, setScan] = useState<RecoveryInfo | null>(null),
     [scanned, setScanned] = useState(false),
     [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false),
     [feedback, setFeedback] = useState(""),
     [error, setError] = useState("");
-  const run = async (operation: () => Promise<void>, success = "") => {
-    if (busy) return;
+  const [section, setSection] = useState("backup");
+  const unavailable = busy || blocked;
+  useEffect(() => {
+    if (unsavedPreferences) setIncludeSettings(false);
+  }, [unsavedPreferences]);
+  useEffect(() => {
+    if (workInProgress(data)) setMode("merge");
+  }, [data.activeShift, data.extraShifts, data.orphanedShift]);
+  const run = async (
+    operation: () => Promise<void>,
+    success = "",
+    section = "backup",
+  ) => {
+    if (operationPending.current || blocked) return;
+    operationPending.current = true;
+    setSection(section);
     setBusy(true);
     setError("");
     setFeedback("");
@@ -54,9 +78,32 @@ export function DataCards({
     } catch (e) {
       setError(e instanceof Error ? e.message : "Data operation failed.");
     } finally {
+      operationPending.current = false;
       setBusy(false);
     }
   };
+  const status = (value: string) =>
+    section !== value ? null : (
+      <>
+        {busy && <Text style={styles.cardMeta}>Working…</Text>}
+        {feedback !== "" && (
+          <Text
+            accessibilityRole="alert"
+            style={{ color: colors.success, marginTop: 12 }}
+          >
+            {feedback}
+          </Text>
+        )}
+        {error !== "" && (
+          <Text
+            accessibilityRole="alert"
+            style={{ color: colors.danger, marginTop: 12 }}
+          >
+            {error}
+          </Text>
+        )}
+      </>
+    );
   return (
     <>
       <View style={styles.card}>
@@ -70,7 +117,7 @@ export function DataCards({
           <>
             <Action
               title="Export JSON backup"
-              disabled={busy}
+              disabled={unavailable}
               onPress={() => {
                 void run(
                   () => actions.onExport("json"),
@@ -80,7 +127,7 @@ export function DataCards({
             />
             <Action
               title="Export history CSV"
-              disabled={busy}
+              disabled={unavailable}
               onPress={() => {
                 void run(
                   () => actions.onExport("csv"),
@@ -90,90 +137,127 @@ export function DataCards({
             />
             <Action
               title="Choose backup file…"
-              disabled={busy}
+              disabled={unavailable}
               onPress={() => {
                 void run(async () => {
                   const result = await actions.onPick();
                   if (result) {
                     setPending(result);
                     setMode("merge");
-                    setIncludeSettings(true);
+                    setIncludeSettings(false);
                   }
                 });
               }}
             />
             {pending && (
-              <View>
-                <Text style={[styles.cardTitle, { marginTop: 18 }]}>
-                  Review import
-                </Text>
-                <Text style={styles.cardMeta}>
-                  {pending.history.length} entries · {pending.jobs?.length ?? 0}{" "}
-                  jobs · {pending.deductions?.length ?? 0} deductions ·{" "}
-                  {pending.paychecks?.length ?? 0} receipts
-                </Text>
-                {pending.warnings.map((warning) => (
-                  <Text
-                    key={warning}
-                    style={{ color: colors.warning, marginTop: 8 }}
-                  >
-                    {warning}
+              <FormModal
+                title="Review import"
+                busy={unavailable}
+                onClose={() => setPending(null)}
+              >
+                <View>
+                  <Text style={[styles.cardTitle, { marginTop: 18 }]}>
+                    Review import
                   </Text>
-                ))}
-                <Choices
-                  value={mode}
-                  options={[
-                    { value: "merge", label: "Merge (keep existing IDs)" },
-                    { value: "replace", label: "Replace included collections" },
-                  ]}
-                  onChange={(value) => setMode(value as typeof mode)}
-                />
-                <Text style={styles.cardMeta}>
-                  Merge preserves existing records on ID conflicts. Replace
-                  overwrites only the collections actually included in the file.
-                  Unfinished imported shifts remain drafts.
-                </Text>
-                {pending.settings && (
-                  <Toggle
-                    title="Also restore preferences & defaults"
-                    value={includeSettings}
-                    onChange={setIncludeSettings}
+                  <Text style={styles.cardMeta}>
+                    {pending.history.length} entries ·{" "}
+                    {pending.jobs?.length ?? 0} jobs ·{" "}
+                    {pending.deductions?.length ?? 0} deductions ·{" "}
+                    {pending.paychecks?.length ?? 0} receipts
+                  </Text>
+                  {pending.warnings.map((warning) => (
+                    <Text
+                      key={warning}
+                      style={{ color: colors.warning, marginTop: 8 }}
+                    >
+                      {warning}
+                    </Text>
+                  ))}
+                  <Choices
+                    disabled={unavailable}
+                    value={mode}
+                    options={[
+                      { value: "merge", label: "Merge (keep existing IDs)" },
+                      ...(!workInProgress(data)
+                        ? [
+                            {
+                              value: "replace",
+                              label: "Replace included collections",
+                            },
+                          ]
+                        : []),
+                    ]}
+                    onChange={(value) => setMode(value as typeof mode)}
                   />
-                )}
-                <Action
-                  title="Confirm import"
-                  disabled={busy}
-                  onPress={() =>
-                    Alert.alert(
-                      "Import backup?",
-                      mode === "replace"
-                        ? "Included collections will be replaced. Clock out running shifts first. A device recovery snapshot is retained before replacement."
-                        : "Existing matching IDs are kept. New IDs are added. Review counts and warnings before continuing.",
-                      [
-                        { text: "Cancel", style: "cancel" },
-                        {
-                          text: "Import",
-                          onPress: () => {
-                            void run(async () => {
-                              await actions.onImport(
-                                pending,
-                                mode,
-                                includeSettings,
-                              );
-                              setPending(null);
-                            }, "Import completed locally. No cloud upload was made.");
+                  {workInProgress(data) && (
+                    <Text style={styles.cardMeta}>
+                      Finish or recover current work before replacing
+                      collections. Merge keeps current sessions.
+                    </Text>
+                  )}
+                  {importImpact(data, pending, mode).map((row) => (
+                    <Text key={row.label} style={styles.cardMeta}>
+                      {row.label}:{" "}
+                      {row.included
+                        ? `${row.incoming} in file · ${row.added} new IDs · ${row.conflicts} matching IDs ${mode === "merge" ? "kept" : "replaced"}${mode === "replace" ? ` · ${row.removed} current records removed` : ""}`
+                        : "not included; current records kept"}
+                    </Text>
+                  ))}
+                  <Text style={styles.cardMeta}>
+                    Merge preserves existing records on ID conflicts. Replace
+                    overwrites only the collections actually included in the
+                    file. Unfinished imported shifts remain drafts.
+                  </Text>
+                  {pending.settings && (
+                    <Toggle
+                      title="Also restore preferences & defaults"
+                      value={includeSettings}
+                      disabled={unavailable || unsavedPreferences}
+                      onChange={setIncludeSettings}
+                    />
+                  )}
+                  {pending.settings && unsavedPreferences && (
+                    <Text style={styles.cardMeta}>
+                      Save or discard App preferences before including backup
+                      preferences. Data-only import is available now.
+                    </Text>
+                  )}
+                  {status("backup")}
+                  <Action
+                    title="Confirm import"
+                    disabled={unavailable}
+                    onPress={() =>
+                      Alert.alert(
+                        "Import backup?",
+                        mode === "replace"
+                          ? "The listed current records will be replaced. Device recovery retains missing prior history, but cannot undo changes to matching IDs."
+                          : "Existing matching IDs are kept. New IDs are added. Review counts and warnings before continuing.",
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Import",
+                            onPress: () => {
+                              void run(async () => {
+                                await actions.onImport(
+                                  pending,
+                                  mode,
+                                  includeSettings,
+                                );
+                                setPending(null);
+                              }, "Import completed locally. No cloud upload was made.");
+                            },
                           },
-                        },
-                      ],
-                    )
-                  }
-                />
-                <Action
-                  title="Cancel import"
-                  disabled={busy}
-                  onPress={() => setPending(null)}
-                />
-              </View>
+                        ],
+                      )
+                    }
+                  />
+                  <Action
+                    title="Cancel import"
+                    disabled={unavailable}
+                    onPress={() => setPending(null)}
+                  />
+                </View>
+              </FormModal>
             )}
           </>
         ) : (
@@ -186,6 +270,7 @@ export function DataCards({
           Guest and mock-account modes use this same local workspace. There is
           no cloud account migration or sync yet.
         </Text>
+        {!pending && status("backup")}
       </View>
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Data Recovery</Text>
@@ -198,12 +283,16 @@ export function DataCards({
           <>
             <Action
               title="Scan device recovery snapshot"
-              disabled={busy}
+              disabled={unavailable}
               onPress={() => {
-                void run(async () => {
-                  setScan(await actions.onScan());
-                  setScanned(true);
-                });
+                void run(
+                  async () => {
+                    setScan(await actions.onScan());
+                    setScanned(true);
+                  },
+                  "",
+                  "recovery",
+                );
               }}
             />
             {scanned && (
@@ -216,25 +305,25 @@ export function DataCards({
             {scan && scan.missing > 0 && (
               <Action
                 title={`Restore ${scan.missing} missing entries`}
-                disabled={busy}
+                disabled={unavailable}
                 onPress={() =>
                   Alert.alert(
                     "Recover missing history?",
-                    "Existing IDs and current work are preserved. Missing backup profiles and receipts are merged alongside history.",
+                    "Only missing history and necessary removed-profile references are added. Current receipts, deductions, preferences and sessions are kept.",
                     [
                       { text: "Cancel", style: "cancel" },
                       {
                         text: "Recover",
                         onPress: () => {
-                          void run(async () => {
-                            await actions.onImport(
-                              scan.imported,
-                              "merge",
-                              false,
-                            );
-                            setScan(null);
-                            setScanned(false);
-                          }, "Missing device records restored locally.");
+                          void run(
+                            async () => {
+                              await actions.onRecover(scan);
+                              setScan(null);
+                              setScanned(false);
+                            },
+                            "Missing device history restored locally.",
+                            "recovery",
+                          );
                         },
                       },
                     ],
@@ -246,6 +335,7 @@ export function DataCards({
         ) : (
           <Action title="Preview Premium for recovery" onPress={onPremium} />
         )}
+        {status("recovery")}
       </View>
       <View style={[styles.card, { borderColor: colors.danger }]}>
         <Text style={[styles.cardTitle, { color: colors.danger }]}>
@@ -257,54 +347,66 @@ export function DataCards({
           Your current mock/guest account mode, demo entitlement and secure
           privacy lock remain.
         </Text>
-        <Field
-          label="Type RESET to confirm"
-          value={confirm}
-          onChange={setConfirm}
-        />
         <Action
-          title="Reset local workspace"
-          disabled={busy || confirm !== "RESET"}
-          onPress={() =>
-            Alert.alert(
-              "Delete local workspace?",
-              "This cannot be undone unless you saved an external backup. The device recovery snapshot is also removed. The privacy lock remains enabled.",
-              [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Delete data",
-                  style: "destructive",
-                  onPress: () => {
-                    void run(async () => {
-                      await actions.onReset();
-                      setConfirm("");
-                      setPending(null);
-                      setScan(null);
-                      setScanned(false);
-                    }, "Local workspace reset. Old business records and recovery data were removed.");
-                  },
-                },
-              ],
-            )
-          }
+          title="Reset local workspace…"
+          disabled={unavailable}
+          onPress={() => {
+            setConfirm("");
+            setResetOpen(true);
+          }}
         />
+        {status("reset")}
+        {resetOpen && (
+          <FormModal
+            title="Reset local workspace"
+            busy={unavailable}
+            onClose={() => setResetOpen(false)}
+          >
+            <Text style={styles.cardMeta}>
+              This clears business records and App preferences on this device.
+              Account mode, demo entitlement and the secure privacy lock stay in
+              place.
+            </Text>
+            <Field
+              label="Type RESET to confirm"
+              value={confirm}
+              onChange={setConfirm}
+            />
+            <Action
+              title="Reset local workspace"
+              disabled={unavailable || confirm !== "RESET"}
+              onPress={() =>
+                Alert.alert(
+                  "Delete local workspace?",
+                  "This cannot be undone unless you saved an external backup. The device recovery snapshot is also removed. The privacy lock remains enabled.",
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Delete data",
+                      style: "destructive",
+                      onPress: () => {
+                        void run(
+                          async () => {
+                            await actions.onReset();
+                            setConfirm("");
+                            setPending(null);
+                            setScan(null);
+                            setScanned(false);
+                            setResetOpen(false);
+                          },
+                          "Local workspace reset. Old business records and recovery data were removed.",
+                          "reset",
+                        );
+                      },
+                    },
+                  ],
+                )
+              }
+            />
+            {status("reset")}
+          </FormModal>
+        )}
       </View>
-      {feedback !== "" && (
-        <Text
-          accessibilityRole="alert"
-          style={{ color: colors.success, marginTop: 14 }}
-        >
-          {feedback}
-        </Text>
-      )}
-      {error !== "" && (
-        <Text
-          accessibilityRole="alert"
-          style={{ color: colors.danger, marginTop: 14 }}
-        >
-          {error}
-        </Text>
-      )}
     </>
   );
 }

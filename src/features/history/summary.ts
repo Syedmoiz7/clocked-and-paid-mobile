@@ -89,6 +89,7 @@ export function historySummary(
         );
         if (!scoped.length) return sum;
         const deductionCurrency =
+          item.currency ??
           data.jobs.find((job) => job.id === item.jobId)?.currency ??
           data.preferences.currency;
         if (!item.isPercentage && deductionCurrency !== currency) return sum;

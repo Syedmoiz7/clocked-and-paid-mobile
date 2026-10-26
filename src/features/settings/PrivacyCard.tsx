@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { Action, Choices, Field, Toggle } from "../../components/FormControls";
 import { useThemeTokens } from "../../providers/ThemeProvider";
@@ -6,6 +6,7 @@ import { usePrivacyLock } from "./PrivacyProvider";
 
 export function PrivacyCard() {
   const lock = usePrivacyLock();
+  const pending = useRef(false);
   const { colors, styles } = useThemeTokens();
   const [type, setType] = useState<"pin4" | "pin6" | "password">("pin4");
   const [old, setOld] = useState(""),
@@ -15,9 +16,11 @@ export function PrivacyCard() {
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const run = async (operation: () => Promise<void>, message: string) => {
-    if (busy) return;
+    if (pending.current) return;
+    pending.current = true;
     setBusy(true);
     setError("");
+    setFeedback("");
     try {
       await operation();
       setFeedback(message);
@@ -27,6 +30,7 @@ export function PrivacyCard() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Privacy change failed.");
     } finally {
+      pending.current = false;
       setBusy(false);
     }
   };
@@ -34,9 +38,11 @@ export function PrivacyCard() {
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Privacy lock</Text>
       <Text style={styles.cardMeta}>
-        {lock.configured ? `Enabled · ${lock.type}` : "Not configured"}. Locks
-        on app background and cold launch. This is an app access gate, not
-        database or export encryption.
+        {lock.configured
+          ? `Enabled · ${lock.type === "pin4" ? "4-digit PIN" : lock.type === "pin6" ? "6-digit PIN" : "Password"}`
+          : "Not configured"}
+        . Locks on app background and cold launch. This is an app access gate,
+        not database or export encryption.
       </Text>
       <Text style={styles.cardMeta}>
         Keep your credential safe. Mock sign-in cannot reset or bypass it.
@@ -46,6 +52,8 @@ export function PrivacyCard() {
         <Field
           label="Current PIN / password"
           secure
+          disabled={busy}
+          keyboardType={lock.type === "password" ? "default" : "number-pad"}
           value={old}
           onChange={setOld}
         />
@@ -57,18 +65,31 @@ export function PrivacyCard() {
           { value: "pin6", label: "6-digit PIN" },
           { value: "password", label: "Password" },
         ]}
-        onChange={(value) => setType(value as typeof type)}
+        disabled={busy}
+        onChange={(next) => {
+          if (next !== type) {
+            setType(next as typeof type);
+            setValue("");
+            setConfirmation("");
+            setError("");
+            setFeedback("");
+          }
+        }}
       />
       <Field
         label="New PIN / password"
         secure
         numeric={type !== "password"}
+        keyboardType={type !== "password" ? "number-pad" : "default"}
+        disabled={busy}
         value={value}
         onChange={setValue}
       />
       <Field
         label="Confirm new credential"
         secure
+        keyboardType={type !== "password" ? "number-pad" : "default"}
+        disabled={busy}
         numeric={type !== "password"}
         value={confirmation}
         onChange={setConfirmation}
@@ -102,6 +123,7 @@ export function PrivacyCard() {
                 : "Device authentication (not enrolled/available)"
             }
             value={lock.biometrics}
+            disabled={busy || (!lock.biometricAvailable && !lock.biometrics)}
             onChange={(enabled) => {
               void run(
                 () => lock.setBiometrics(enabled),

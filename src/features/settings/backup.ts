@@ -10,6 +10,8 @@ import { localDate, validDate } from "../../utils/dateOnly";
 import { addDays } from "../history/payPeriods";
 import { csvFor } from "../history/model";
 import { validateJob, validTime } from "../jobs/model";
+import { workInProgress } from "../jobs/model";
+import { preserveWorkspacePricing } from "./drafts";
 import {
   validateDeduction,
   validateReceipt,
@@ -50,7 +52,7 @@ const jobFields =
     " ",
   );
 const deductionFields =
-  "id label amount frequency enabled jobId isPercentage beforeTax taxSetAside applicableFromDate applicableToDate payDate notes consumedByPaycheckId".split(
+  "id label amount currency frequency enabled jobId isPercentage beforeTax taxSetAside applicableFromDate applicableToDate payDate notes consumedByPaycheckId".split(
     " ",
   );
 const receiptFields =
@@ -465,6 +467,7 @@ export function csvText(data: AppState) {
     data.jobs,
     data.defaultPlan,
     data.preferences.currency,
+    data.paychecks,
   );
 }
 export function applyImport(
@@ -473,8 +476,39 @@ export function applyImport(
   mode: "merge" | "replace",
   includeSettings: boolean,
 ): AppState {
-  if (mode === "replace" && (data.activeShift || data.extraShifts.length))
-    throw new Error("Clock out all running shifts before replacing data.");
+  if (mode === "replace" && workInProgress(data))
+    throw new Error(
+      "Clock out or resolve all running/recoverable shifts before replacing data.",
+    );
+  const incoming = preserveWorkspacePricing({
+    ...data,
+    history: imported.history,
+    jobs: imported.jobs ?? data.jobs,
+    defaultPlan: imported.settings?.plan ?? data.defaultPlan,
+    preferences: imported.settings?.preferences ?? data.preferences,
+    activeShift: null,
+    extraShifts: [],
+    orphanedShift: null,
+    deductions: imported.deductions ?? [],
+    paychecks: imported.paychecks ?? [],
+  });
+  imported = {
+    ...imported,
+    history: incoming.history,
+    jobs: imported.jobs ? incoming.jobs : undefined,
+    deductions: imported.deductions ? incoming.deductions : undefined,
+    paychecks: imported.paychecks ? incoming.paychecks : undefined,
+  };
+  if (includeSettings && imported.settings) {
+    const next = imported.settings;
+    if (
+      data.preferences.currency !== next.preferences.currency ||
+      data.defaultPlan.hourlyRate !== next.plan.hourlyRate ||
+      data.defaultPlan.overtimeThreshold !== next.plan.overtimeThreshold ||
+      data.defaultPlan.overtimeMultiplier !== next.plan.overtimeMultiplier
+    )
+      data = preserveWorkspacePricing(data);
+  }
   const combine = <T extends { id: string }>(
     current: T[],
     incoming: T[] | undefined,
@@ -556,8 +590,9 @@ export function applyImport(
         );
   }
   if (
-    !data.activeShift &&
-    (imported.jobs || (includeSettings && imported.settings))
+    !workInProgress(data) &&
+    (result.selectedJobId !== data.selectedJobId ||
+      (includeSettings && imported.settings))
   )
     result.todayPlan = {
       ...result.defaultPlan,
@@ -569,6 +604,21 @@ export function applyImport(
       lunchEnabled: selected?.lunchEnabled ?? result.defaultPlan.lunchEnabled,
       lunchMinutes: selected?.lunchMinutes ?? result.defaultPlan.lunchMinutes,
     };
+  if (includeSettings && imported.settings) {
+    const settings =
+      result.jobs.find(
+        (job) => job.id === (data.activeShift?.jobId ?? result.selectedJobId),
+      )?.reminderSettings ?? result.preferences.defaultReminders;
+    result.reminders = {
+      ...result.reminders,
+      lunchReminder: settings.lunchMode !== "off",
+      returnReminder: settings.returnReminder,
+      reminderSound: settings.sound,
+      reminderOverlay: settings.overlay,
+      reminderTabFlash: settings.indicator,
+      reminderSnoozeMinutes: settings.snoozeMinutes,
+    };
+  }
   return result;
 }
 

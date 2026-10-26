@@ -364,6 +364,7 @@ export function deductionCurrencyMatches(
   data: AppState,
   currency: string,
 ) {
+  if (!item.isPercentage && item.currency) return item.currency === currency;
   return item.jobId
     ? scopeCurrency(data, item.jobId) === currency
     : Boolean(item.isPercentage) || data.preferences.currency === currency;
@@ -916,6 +917,8 @@ export function projectedDeductions(
   return { annual, monthly: annual / 12 };
 }
 export function validateDeduction(item: Deduction) {
+  if (item.currency && !currencies.includes(item.currency))
+    return "Choose a supported deduction currency.";
   if (!item.label.trim()) return "Enter a deduction name.";
   if (
     !Number.isFinite(item.amount) ||

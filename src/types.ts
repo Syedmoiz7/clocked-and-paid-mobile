@@ -37,6 +37,7 @@ export type Deduction = {
   id: string;
   label: string;
   amount: number;
+  currency?: string;
   frequency:
     "daily" | "weekly" | "per-pay-period" | "monthly" | "yearly" | "one-time";
   enabled: boolean;

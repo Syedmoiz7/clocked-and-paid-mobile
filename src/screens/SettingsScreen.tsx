@@ -4,6 +4,8 @@ import { useThemeTokens } from "../providers/ThemeProvider";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Action, Choices } from "../components/FormControls";
 import type { AppState, MockAccount } from "../types";
+import { rebaseSettingsDraft, sameValue } from "../features/settings/drafts";
+import { PayVisibilityButton } from "../components/PayVisibilityButton";
 import { AccountCard } from "../features/settings/AccountCard";
 import {
   AppearanceCard,
@@ -12,19 +14,23 @@ import {
 } from "../features/settings/PreferenceCards";
 import { DataCards, type DataActions } from "../features/settings/DataCards";
 import { PrivacyCard } from "../features/settings/PrivacyCard";
-import {
-  settingsDraft,
-  validateSettings,
-  type SettingsDraft,
-} from "../features/settings/model";
+import { settingsDraft, type SettingsDraft } from "../features/settings/model";
 
 export type SettingsActions = DataActions & {
-  onSave: (draft: SettingsDraft) => void;
-  onHue: (hue: number) => void;
-  onAccount: (account: MockAccount) => void;
+  onSave: (
+    draft: SettingsDraft,
+    base: SettingsDraft,
+  ) => Promise<
+    { draft: SettingsDraft; error: null } | { error: string; draft?: never }
+  >;
+  onHue: (hue: number) => Promise<string | null>;
+  onAccount: (
+    account: Partial<Pick<MockAccount, "name" | "email">>,
+  ) => Promise<string | null>;
+  onPayVisibility: () => void;
   onPassword: (password: string) => Promise<void>;
   onSignIn: () => void;
-  onSignOut: () => void;
+  onSignOut: (hasDrafts: boolean) => void;
   onSetup: () => void;
   onPremium: () => void;
   onEndPreview: () => void;
@@ -32,33 +38,27 @@ export type SettingsActions = DataActions & {
 export function SettingsScreen({
   data,
   actions,
+  busy,
 }: {
   data: AppState;
   actions: SettingsActions;
+  busy: boolean;
 }) {
   const { colors, styles } = useThemeTokens();
   const [tab, setTab] = useState("account"),
     [draft, setDraft] = useState(() => settingsDraft(data));
-  const source = JSON.stringify(settingsDraft(data)),
+  const source = settingsDraft(data),
     previous = useRef(source);
+  const pending = useRef(false);
+  const [revision, setRevision] = useState(0);
   const [error, setError] = useState(""),
     [feedback, setFeedback] = useState("");
   useEffect(() => {
     const old = previous.current;
     previous.current = source;
-    setDraft((value) =>
-      JSON.stringify(value) === old
-        ? settingsDraft(data)
-        : {
-            ...value,
-            preferences: {
-              ...value.preferences,
-              themeHue: data.preferences.themeHue,
-            },
-          },
-    );
-  }, [source]);
-  const dirty = JSON.stringify(draft) !== source;
+    setDraft((value) => rebaseSettingsDraft(value, old, source));
+  }, [data.preferences, data.defaultPlan, data.breakIncludedInRemaining]);
+  const dirty = !sameValue(draft, source);
   return (
     <SafeAreaView style={styles.screen} edges={["top"]}>
       <ScrollView
@@ -68,7 +68,20 @@ export function SettingsScreen({
         contentContainerStyle={styles.content}
       >
         <Text style={styles.eyebrow}>PERSONALIZE</Text>
-        <Text style={styles.title}>Settings</Text>
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <Text style={[styles.title, { flexGrow: 1 }]}>Settings</Text>
+          <PayVisibilityButton
+            visible={data.payVisible}
+            onToggle={actions.onPayVisibility}
+          />
+        </View>
         <Text style={styles.subtitle}>
           Manage your account, appearance, and app preferences.
         </Text>
@@ -79,6 +92,7 @@ export function SettingsScreen({
             { value: "app", label: "App" },
           ]}
           onChange={setTab}
+          disabled={busy}
         />
         <View style={styles.card}>
           <Text style={styles.cardTitle}>
@@ -90,22 +104,29 @@ export function SettingsScreen({
           <Action
             title={data.isPremium ? "End Premium preview" : "Explore Premium"}
             onPress={data.isPremium ? actions.onEndPreview : actions.onPremium}
+            disabled={busy}
           />
         </View>
         {tab === "account" ? (
           <AccountCard
             account={data.account}
+            saving={busy}
             onAccount={actions.onAccount}
             onPassword={actions.onPassword}
             onSignIn={actions.onSignIn}
-            onSignOut={actions.onSignOut}
+            onSignOut={(hasDrafts) => actions.onSignOut(dirty || hasDrafts)}
             onSetup={actions.onSetup}
           />
         ) : (
           <>
             <PreferenceCards
+              key={revision}
               draft={draft}
+              disabled={busy}
+              premium={data.isPremium}
+              onPremium={actions.onPremium}
               onChange={(value) => {
+                if (busy) return;
                 setDraft(value);
                 setError("");
                 setFeedback("");
@@ -114,11 +135,14 @@ export function SettingsScreen({
             <AppearanceCard
               data={data}
               onHue={actions.onHue}
+              busy={busy}
               onPremium={actions.onPremium}
             />
             <PrivacyCard />
             <DataCards
               data={data}
+              blocked={busy}
+              unsavedPreferences={dirty}
               actions={{
                 ...actions,
                 onReset: async () => {
@@ -126,15 +150,28 @@ export function SettingsScreen({
                   setDraft(reset);
                   setError("");
                   setFeedback("");
+                  previous.current = reset;
+                  setRevision((value) => value + 1);
                   return reset;
                 },
                 onImport: async (imported, mode, includeSettings) => {
-                  await actions.onImport(imported, mode, includeSettings);
+                  if (dirty && includeSettings)
+                    throw new Error(
+                      "Save or discard App preferences before restoring preferences from a backup.",
+                    );
+                  const restored = await actions.onImport(
+                    imported,
+                    mode,
+                    includeSettings,
+                  );
                   if (includeSettings && imported.settings) {
-                    setDraft(imported.settings);
+                    setDraft(restored);
+                    previous.current = restored;
+                    setRevision((value) => value + 1);
                     setError("");
                     setFeedback("");
                   }
+                  return restored;
                 },
               }}
               onPremium={actions.onPremium}
@@ -158,7 +195,7 @@ export function SettingsScreen({
             {feedback}
           </Text>
         )}
-        {error !== "" && (
+        {error !== "" && !dirty && (
           <Text
             accessibilityRole="alert"
             style={{ color: colors.danger, marginTop: 12 }}
@@ -167,7 +204,7 @@ export function SettingsScreen({
           </Text>
         )}
       </ScrollView>
-      {dirty && tab === "app" && (
+      {dirty && (
         <View
           style={{
             backgroundColor: colors.surfaceRaised,
@@ -176,13 +213,16 @@ export function SettingsScreen({
             padding: 12,
           }}
         >
-          <Text style={styles.cardMeta}>Unsaved changes</Text>
+          <Text style={styles.cardMeta}>Unsaved App preferences</Text>
           <View style={{ flexDirection: "row", gap: 10 }}>
             <View style={{ flex: 1 }}>
               <Action
                 title="Discard"
+                disabled={busy}
                 onPress={() => {
                   setDraft(settingsDraft(data));
+                  previous.current = settingsDraft(data);
+                  setRevision((value) => value + 1);
                   setError("");
                   setFeedback("Changes discarded.");
                 }}
@@ -190,16 +230,32 @@ export function SettingsScreen({
             </View>
             <View style={{ flex: 1 }}>
               <Action
-                title="Save Changes"
+                title={busy ? "Saving…" : "Save Changes"}
+                disabled={busy}
                 onPress={() => {
-                  const error = validateSettings(draft);
-                  if (error) {
-                    setError(error);
-                    return;
-                  }
-                  actions.onSave(draft);
+                  if (pending.current) return;
+                  pending.current = true;
                   setError("");
-                  setFeedback("Preferences saved on this device.");
+                  setFeedback("");
+                  void actions
+                    .onSave(draft, previous.current)
+                    .then((result) => {
+                      if (result.error) setError(result.error);
+                      else if (result.draft) {
+                        setDraft(result.draft);
+                        previous.current = result.draft;
+                        setRevision((value) => value + 1);
+                        setFeedback("Preferences saved on this device.");
+                      }
+                    })
+                    .catch(() =>
+                      setError(
+                        "Could not save. Your draft is still here. Please try again.",
+                      ),
+                    )
+                    .finally(() => {
+                      pending.current = false;
+                    });
                 }}
               />
             </View>

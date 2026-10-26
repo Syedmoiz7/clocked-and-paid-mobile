@@ -288,7 +288,7 @@ export function JobsScreen({
                       .map((item) => (
                         <View key={item.id} style={{ marginTop: 10 }}>
                           <Toggle
-                            title={`${item.label} · ${data.payVisible ? `${item.amount}${item.isPercentage ? "%" : ` ${job.currency ?? data.preferences.currency}`}` : "•••••"}${item.isPercentage ? " of matching gross" : ` / ${item.frequency}`}`}
+                            title={`${item.label} · ${data.payVisible ? `${item.amount}${item.isPercentage ? "%" : ` ${item.currency ?? job.currency ?? data.preferences.currency}`}` : "•••••"}${item.isPercentage ? " of matching gross" : ` / ${item.frequency}`}`}
                             value={item.enabled}
                             disabled={saving}
                             onChange={(enabled) =>

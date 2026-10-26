@@ -195,6 +195,7 @@ export function DeductionForm({
     setDraft((value) => ({ ...value, ...changes }));
   };
   const currency =
+    (!draft.isPercentage ? draft.currency : undefined) ??
     data.jobs.find((job) => job.id === draft.jobId)?.currency ??
     data.preferences.currency;
   const boundedEntries = periodEntries(
@@ -314,7 +315,13 @@ export function DeductionForm({
                 data.preferences.currency) !== currency
             )
               changeAmount("");
-            update({ jobId: jobId || null });
+            update({
+              jobId: jobId || null,
+              currency: draft.isPercentage
+                ? undefined
+                : (data.jobs.find((job) => job.id === jobId)?.currency ??
+                  data.preferences.currency),
+            });
           }}
         />
       )}
@@ -356,6 +363,7 @@ export function DeductionForm({
             ...draft,
             label: draft.label.trim(),
             amount: amount.trim() === "" ? NaN : Number(amount),
+            currency: draft.isPercentage ? undefined : currency,
           };
           const validation = validateDeduction(value);
           if (validation) setError(validation);

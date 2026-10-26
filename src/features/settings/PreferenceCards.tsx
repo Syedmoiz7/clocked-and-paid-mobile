@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Action, Choices, Field, Toggle } from "../../components/FormControls";
 import { TimePickerField } from "../../components/TimePickerField";
@@ -13,20 +13,23 @@ export function SettingsNumber({
   label,
   value,
   onChange,
+  disabled = false,
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
+  disabled?: boolean;
 }) {
   const [text, setText] = useState(Number.isFinite(value) ? String(value) : "");
   useEffect(() => {
-    if (Number.isFinite(value) && Number(text) !== value)
+    if (Number.isFinite(value) && (!text.trim() || Number(text) !== value))
       setText(String(value));
   }, [value]);
   return (
     <Field
       label={label}
       numeric
+      disabled={disabled}
       value={text}
       onChange={(text) => {
         setText(text);
@@ -38,9 +41,15 @@ export function SettingsNumber({
 export function PreferenceCards({
   draft,
   onChange,
+  disabled,
+  premium,
+  onPremium,
 }: {
   draft: SettingsDraft;
   onChange: (value: SettingsDraft) => void;
+  disabled: boolean;
+  premium: boolean;
+  onPremium: () => void;
 }) {
   const { styles } = useThemeTokens();
   const prefs = draft.preferences,
@@ -56,7 +65,7 @@ export function PreferenceCards({
   const reminder = (changes: Partial<typeof reminders>) =>
     update({ defaultReminders: { ...reminders, ...changes } });
   return (
-    <>
+    <View pointerEvents={disabled ? "none" : "auto"}>
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Workday Defaults</Text>
         <Text style={styles.cardMeta}>
@@ -80,6 +89,7 @@ export function PreferenceCards({
         {(customHours || ![6, 8, 10, 12].includes(plan.plannedHours)) && (
           <SettingsNumber
             label="Typical work hours (up to 24)"
+            disabled={disabled}
             value={plan.plannedHours}
             onChange={(plannedHours) => updatePlan({ plannedHours })}
           />
@@ -91,6 +101,7 @@ export function PreferenceCards({
         />
         <SettingsNumber
           label="Default lunch duration (min)"
+          disabled={disabled || !plan.lunchEnabled}
           value={plan.lunchMinutes}
           onChange={(lunchMinutes) => updatePlan({ lunchMinutes })}
         />
@@ -118,18 +129,30 @@ export function PreferenceCards({
           Used only when a job has no custom reminder settings. Edit
           job-specific rules in Jobs.
         </Text>
-        <Toggle
-          title="Lunch Start Reminder"
-          value={reminders.lunchMode !== "off"}
-          onChange={(enabled) =>
-            reminder({ lunchMode: enabled ? "relative" : "off" })
+        <Choices
+          value={reminders.lunchMode}
+          options={[
+            { value: "off", label: "No lunch reminder" },
+            { value: "relative", label: "After clock-in" },
+            { value: "fixed", label: "At a fixed time" },
+          ]}
+          onChange={(value) =>
+            reminder({ lunchMode: value as typeof reminders.lunchMode })
           }
         />
-        {reminders.lunchMode !== "off" && (
+        {reminders.lunchMode === "relative" && (
           <SettingsNumber
-            label="Remind after (hours worked)"
+            label="Hours since clock-in (includes pauses)"
+            disabled={disabled}
             value={reminders.lunchHours}
             onChange={(lunchHours) => reminder({ lunchHours })}
+          />
+        )}
+        {reminders.lunchMode === "fixed" && (
+          <TimePickerField
+            label="Lunch reminder time"
+            value={reminders.lunchTime}
+            onChange={(lunchTime) => reminder({ lunchTime })}
           />
         )}
         <Toggle
@@ -139,11 +162,13 @@ export function PreferenceCards({
         />
         <SettingsNumber
           label="Re-fire interval (min; 0 = off)"
+          disabled={disabled}
           value={reminders.repeatMinutes}
           onChange={(repeatMinutes) => reminder({ repeatMinutes })}
         />
         <SettingsNumber
           label="Snooze duration (min)"
+          disabled={disabled || !reminders.overlay}
           value={reminders.snoozeMinutes}
           onChange={(snoozeMinutes) => reminder({ snoozeMinutes })}
         />
@@ -179,9 +204,15 @@ export function PreferenceCards({
           title="Allow concurrent jobs (Premium)"
           value={prefs.allowConcurrentShifts}
           onChange={(allowConcurrentShifts) =>
-            update({ allowConcurrentShifts })
+            allowConcurrentShifts && !premium
+              ? onPremium()
+              : update({ allowConcurrentShifts })
           }
         />
+        <Text style={styles.cardMeta}>
+          Pay visibility is applied when saved and on app launch. Use the eye
+          button for temporary visibility.
+        </Text>
         <Toggle
           title="Hide pay by default"
           value={prefs.payHiddenByDefault}
@@ -226,19 +257,23 @@ export function PreferenceCards({
           }
         />
       </View>
-    </>
+    </View>
   );
 }
 export function AppearanceCard({
   data,
   onHue,
   onPremium,
+  busy,
 }: {
   data: AppState;
-  onHue: (hue: number) => void;
+  onHue: (hue: number) => Promise<string | null>;
   onPremium: () => void;
+  busy: boolean;
 }) {
   const { colors, styles } = useThemeTokens();
+  const pending = useRef(false);
+  const [feedback, setFeedback] = useState("");
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>App Theme Color</Text>
@@ -256,6 +291,7 @@ export function AppearanceCard({
         {themeOptions.map((option, index) => (
           <Pressable
             key={option.hue}
+            disabled={busy}
             accessibilityRole="button"
             accessibilityLabel={`${option.label}${index > 0 && !entitlementsFor(data).fullThemePalette ? ", Premium" : ""}`}
             accessibilityState={{
@@ -264,7 +300,20 @@ export function AppearanceCard({
             onPress={() => {
               if (index > 0 && !entitlementsFor(data).fullThemePalette)
                 onPremium();
-              else onHue(option.hue);
+              else if (!pending.current) {
+                pending.current = true;
+                setFeedback("");
+                void onHue(option.hue)
+                  .then((error) =>
+                    setFeedback(error ?? "Theme saved on this device."),
+                  )
+                  .catch(() =>
+                    setFeedback("Could not save the theme. Please try again."),
+                  )
+                  .finally(() => {
+                    pending.current = false;
+                  });
+              }
             }}
             style={{
               width: 42,
@@ -290,6 +339,11 @@ export function AppearanceCard({
           </Pressable>
         ))}
       </View>
+      {feedback && (
+        <Text accessibilityRole="alert" style={styles.cardMeta}>
+          {feedback}
+        </Text>
+      )}
     </View>
   );
 }
@@ -301,7 +355,11 @@ export function PayPreview({
   draft: SettingsDraft;
 }) {
   const { styles } = useThemeTokens();
-  if (!Number.isFinite(draft.plan.plannedHours) || draft.plan.plannedHours <= 0)
+  if (
+    !Number.isFinite(draft.plan.plannedHours) ||
+    draft.plan.plannedHours <= 0 ||
+    draft.plan.plannedHours > 24
+  )
     return (
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Pay Preview</Text>
@@ -314,30 +372,34 @@ export function PayPreview({
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Pay Preview</Text>
       <Text style={styles.cardMeta}>
-        Illustrative base-rate day, matching the client's preview; overtime is
-        shown separately.
+        Gross for the draft’s paid work hours, including overtime. Lunch extends
+        the day; it is not subtracted again. Tips and deductions are excluded.
       </Text>
       {[
         ...data.jobs
           .filter((item) => !item.archived)
           .map((job) => ({
+            id: job.id,
             name: job.name,
             rate: job.hourlyRate,
             multiplier: job.overtimeMultiplier ?? draft.plan.overtimeMultiplier,
+            threshold: job.overtimeThreshold ?? draft.plan.overtimeThreshold,
             currency: job.currency ?? draft.preferences.currency,
           })),
         {
+          id: "__global__",
           name: "Global / Unlabeled shifts",
           rate: draft.plan.hourlyRate,
           multiplier: draft.plan.overtimeMultiplier,
+          threshold: draft.plan.overtimeThreshold,
           currency: draft.preferences.currency,
         },
       ].map((row) => (
-        <View key={row.name} style={{ marginTop: 14 }}>
+        <View key={row.id} style={{ marginTop: 14 }}>
           <Text style={styles.cardTitle}>{row.name}</Text>
           <Text style={styles.cardMeta}>
             {data.payVisible
-              ? `Regular / hr: ${money(row.rate, row.currency)} · OT / hr: ${money(row.rate * row.multiplier, row.currency)} · ${draft.plan.plannedHours}hr day: ${money(row.rate * draft.plan.plannedHours, row.currency)}`
+              ? `Regular / hr: ${money(row.rate, row.currency)} · OT / hr: ${money(row.rate * row.multiplier, row.currency)} · ${draft.plan.plannedHours}hr gross: ${money(Math.min(draft.plan.plannedHours, row.threshold) * row.rate + Math.max(0, draft.plan.plannedHours - row.threshold) * row.rate * row.multiplier, row.currency)}`
               : "••••• · pay is hidden"}
           </Text>
         </View>

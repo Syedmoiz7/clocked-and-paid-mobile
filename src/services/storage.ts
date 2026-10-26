@@ -1,5 +1,6 @@
 import Storage from "expo-sqlite/kv-store";
 import type { AppState } from "../types";
+import { preserveWorkspacePricing } from "../features/settings/drafts";
 
 const STORAGE_KEY = "clocked-and-paid.mobile.state.v1";
 const RECOVERY_KEY = "clocked-and-paid.mobile.recovery.v1";
@@ -42,11 +43,14 @@ export async function saveAppState(state: AppState): Promise<void> {
       state.history.length >= count &&
       (state.history.length > 0 || state.jobs.length > 0)
     )
-      await Storage.setItem(
-        RECOVERY_KEY,
-        JSON.stringify({ savedAt: new Date().toISOString(), state }),
-      );
-    await Storage.setItem(STORAGE_KEY, raw);
+      await Storage.multiSet([
+        [
+          RECOVERY_KEY,
+          JSON.stringify({ savedAt: new Date().toISOString(), state }),
+        ],
+        [STORAGE_KEY, raw],
+      ]);
+    else await Storage.setItem(STORAGE_KEY, raw);
   });
 }
 
@@ -64,7 +68,40 @@ export async function loadRecovery(): Promise<{
 }
 export async function resetStoredWorkspace(state: AppState) {
   return serialized(async () => {
-    await Storage.setItem(STORAGE_KEY, JSON.stringify(state));
-    await Storage.removeItem(RECOVERY_KEY);
+    await Storage.multiSet([
+      [STORAGE_KEY, JSON.stringify(state)],
+      [RECOVERY_KEY, ""],
+    ]);
   });
+}
+export async function saveReplacedWorkspace(before: AppState, next: AppState) {
+  const previous = preserveWorkspacePricing(before),
+    incoming = preserveWorkspacePricing(next);
+  const recovery = {
+    ...previous,
+    history: [
+      ...new Map(
+        [...incoming.history, ...previous.history].map((entry) => [
+          entry.id,
+          entry,
+        ]),
+      ).values(),
+    ],
+    jobs: [
+      ...new Map(
+        [...incoming.jobs, ...previous.jobs].map((job) => [job.id, job]),
+      ).values(),
+    ],
+  };
+  const saved = JSON.stringify({
+    savedAt: new Date().toISOString(),
+    state: recovery,
+  });
+  const raw = JSON.stringify(next);
+  return serialized(() =>
+    Storage.multiSet([
+      [RECOVERY_KEY, saved],
+      [STORAGE_KEY, raw],
+    ]),
+  );
 }

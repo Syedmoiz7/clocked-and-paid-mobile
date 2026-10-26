@@ -15,6 +15,7 @@ const test = require("node:test"),
   assert = require("node:assert/strict");
 const values = new Map();
 let fail = false;
+let failPair = -1;
 const originalLoad = Module._load;
 Module._load = function (request, ...args) {
   if (request === "expo-sqlite/kv-store")
@@ -26,6 +27,16 @@ Module._load = function (request, ...args) {
           values.set(key, value);
         },
         removeItem: async (key) => values.delete(key),
+        multiSet: async (pairs) => {
+          if (fail) throw new Error("disk full");
+          const staged = new Map(values);
+          pairs.forEach(([key, value], index) => {
+            if (index === failPair) throw new Error("transaction failed");
+            staged.set(key, value);
+          });
+          values.clear();
+          for (const [key, value] of staged) values.set(key, value);
+        },
       },
     };
   return originalLoad.call(this, request, ...args);
@@ -110,4 +121,56 @@ test("theme factories preserve the Rose default and create native-safe hex palet
     );
     assert.notEqual(palette.background, theme.colors.background);
   }
+});
+test("failed combined workspace/recovery writes leave both committed values intact", async () => {
+  values.clear();
+  await storage.saveAppState({ ...initial, history: [entry("old")] });
+  const before = new Map(values);
+  failPair = 1;
+  await assert.rejects(
+    storage.saveAppState({ ...initial, history: [entry("old"), entry("new")] }),
+    /transaction failed/,
+  );
+  failPair = -1;
+  assert.deepEqual(values, before);
+});
+test("reset cannot clear business data while failing to clear its recovery copy", async () => {
+  values.clear();
+  await storage.saveAppState({ ...initial, history: [entry("keep")] });
+  const before = new Map(values);
+  failPair = 1;
+  await assert.rejects(
+    storage.resetStoredWorkspace(initial),
+    /transaction failed/,
+  );
+  failPair = -1;
+  assert.deepEqual(values, before);
+  await storage.resetStoredWorkspace(initial);
+  assert.equal(await storage.loadRecovery(), null);
+});
+test("replacement recovery retains missing prior IDs and imported IDs through automatic saving", async () => {
+  values.clear();
+  const before = { ...initial, history: [entry("previous")] };
+  const next = { ...initial, history: [entry("imported")] };
+  await storage.saveAppState(before);
+  await storage.saveReplacedWorkspace(before, next);
+  await storage.saveAppState(next);
+  assert.equal((await storage.loadAppState()).history[0].id, "imported");
+  assert.deepEqual(
+    (await storage.loadRecovery()).state.history.map((item) => item.id).sort(),
+    ["imported", "previous"],
+  );
+});
+test("failed replacement leaves the current workspace and recovery unchanged", async () => {
+  values.clear();
+  const before = { ...initial, history: [entry("previous")] };
+  await storage.saveAppState(before);
+  const committed = new Map(values);
+  failPair = 1;
+  await assert.rejects(
+    storage.saveReplacedWorkspace(before, { ...initial, history: [] }),
+    /transaction failed/,
+  );
+  failPair = -1;
+  assert.deepEqual(values, committed);
 });

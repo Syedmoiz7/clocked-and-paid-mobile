@@ -5,6 +5,7 @@ import { useThemeTokens } from "../../src/providers/ThemeProvider";
 import { useEffect, useState } from "react";
 import { useAppSelector } from "../../src/store/hooks";
 import { workedMinutes } from "../../src/features/history/model";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const tabs = [
   { name: "tracker", title: "Tracker", icon: "◷" },
@@ -15,7 +16,9 @@ const tabs = [
 ] as const;
 
 export default function TabsLayout() {
-  const { colors, styles } = useThemeTokens();
+  const { colors } = useThemeTokens();
+  const insets = useSafeAreaInsets();
+  const bottomPadding = Math.max(14, insets.bottom);
   const data = useAppSelector((state) => state.app);
   const { activeShift, todayPlan, preferences } = data;
   const [now, setNow] = useState(Date.now());
@@ -43,8 +46,8 @@ export default function TabsLayout() {
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
-          height: 78,
-          paddingBottom: 14,
+          height: 64 + bottomPadding,
+          paddingBottom: bottomPadding,
           paddingTop: 8,
         },
         tabBarLabelStyle: {
