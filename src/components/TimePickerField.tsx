@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
@@ -35,6 +35,7 @@ type Props = {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  disabled?: boolean;
 };
 
 export function TimePickerField({
@@ -42,6 +43,7 @@ export function TimePickerField({
   value,
   onChange,
   placeholder = "Choose time",
+  disabled = false,
 }: Props) {
   const { colors, styles } = useThemeTokens();
   const { format, timeLabel } = useClockFormat();
@@ -65,6 +67,10 @@ export function TimePickerField({
     <View>
       {label && <Text style={styles.cardMeta}>{label}</Text>}
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label ?? placeholder}
+        accessibilityState={{ disabled, expanded: open }}
+        disabled={disabled}
         onPress={show}
         style={{
           backgroundColor: colors.background,
@@ -98,22 +104,40 @@ export function TimePickerField({
           <DateTimePicker
             value={draft}
             mode="time"
-            display="spinner"
+            display={Platform.OS === "ios" ? "spinner" : "default"}
             themeVariant="dark"
             textColor={colors.text}
             is24Hour={format === "24h"}
             locale={format === "24h" ? "en_GB" : "en_US"}
             onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
               if (event.type === "dismissed") close();
-              else if (selectedDate) setDraft(selectedDate);
+              else if (selectedDate) {
+                if (Platform.OS === "android") {
+                  onChange(valueForDate(selectedDate));
+                  close();
+                } else setDraft(selectedDate);
+              }
             }}
           />
-          <Pressable
-            onPress={commit}
-            style={[styles.button, { borderRadius: 0, minHeight: 44 }]}
-          >
-            <Text style={styles.buttonText}>Done</Text>
-          </Pressable>
+          {Platform.OS !== "android" && (
+            <>
+              <Pressable
+                onPress={commit}
+                accessibilityRole="button"
+                disabled={disabled}
+                style={[styles.button, { borderRadius: 0, minHeight: 44 }]}
+              >
+                <Text style={styles.buttonText}>Done</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={close}
+                style={[styles.secondaryButton, { borderRadius: 0 }]}
+              >
+                <Text style={styles.secondaryButtonText}>Cancel</Text>
+              </Pressable>
+            </>
+          )}
         </View>
       )}
     </View>

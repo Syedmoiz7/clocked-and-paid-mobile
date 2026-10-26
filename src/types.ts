@@ -25,6 +25,8 @@ export type Shift = {
   currency?: string | null;
   projectNotes?: string | null;
   customRate?: number | null;
+  overtimeThreshold?: number;
+  overtimeMultiplier?: number;
   lunchPaid?: boolean;
   paid?: boolean;
   paidAt?: string | null;
@@ -158,6 +160,7 @@ export type AppState = {
   hourlyRate: number;
   isPremium: boolean;
   todayPlan: TodayPlan;
+  trackerDay?: string;
   reminders: ReminderSettings;
   jobs: MockJob[];
   selectedJobId: string;

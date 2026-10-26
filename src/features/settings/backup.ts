@@ -42,7 +42,7 @@ const id = (value: unknown) =>
 const stamp = (value: unknown) =>
   typeof value === "string" && Number.isFinite(Date.parse(value));
 const shiftFields =
-  "id date startedAt endedAt lunchMinutes breakMinutes earnings tips tipType missingClockIn historyLunchStart historyLunchEnd breaks jobId breakLabel lunchStartedAt breakStartedAt entryType projectName endDate flatAmount currency projectNotes customRate lunchPaid paid paidAt paidByPaycheckId".split(
+  "id date startedAt endedAt lunchMinutes breakMinutes earnings tips tipType missingClockIn historyLunchStart historyLunchEnd breaks jobId breakLabel lunchStartedAt breakStartedAt entryType projectName endDate flatAmount currency projectNotes customRate overtimeThreshold overtimeMultiplier lunchPaid paid paidAt paidByPaycheckId".split(
     " ",
   );
 const jobFields =
@@ -144,6 +144,17 @@ export function importedShift(value: unknown): Shift {
   for (const key of ["tips", "customRate", "flatAmount"] as const)
     if (result[key] != null && !amount(result[key]))
       throw new Error(`Invalid entry ${key}.`);
+  if (
+    (result.overtimeThreshold != null &&
+      (!amount(result.overtimeThreshold) ||
+        result.overtimeThreshold <= 0 ||
+        result.overtimeThreshold > 24)) ||
+    (result.overtimeMultiplier != null &&
+      (!amount(result.overtimeMultiplier) ||
+        result.overtimeMultiplier < 1 ||
+        result.overtimeMultiplier > 4))
+  )
+    throw new Error("Invalid entry overtime overrides.");
   if (
     !currencyOK(result.currency) ||
     (result.jobId != null && !id(result.jobId))

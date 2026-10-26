@@ -27,7 +27,12 @@ import {
   type SettingsDraft,
 } from "../features/settings/model";
 import { applyImport, type ImportData } from "../features/settings/backup";
-import { localDate } from "../utils/dateOnly";
+import { localDate, validDate } from "../utils/dateOnly";
+import {
+  closePauses,
+  planChanges,
+  withPlanRates,
+} from "../features/tracker/model";
 import {
   jobEditError,
   jobPlan,
@@ -61,6 +66,7 @@ export const initialAppState: AppState = {
   extraShifts: [],
   history: [],
   hourlyRate: 24,
+  trackerDay: localDate(),
   isPremium: false,
   todayPlan: {
     plannedHours: 8,
@@ -402,12 +408,24 @@ const appSlice = createSlice({
               : "",
         },
         activeShift: isOrphaned ? null : savedActiveShift,
-        extraShifts: action.payload.extraShifts ?? [],
+        extraShifts: [
+          ...(action.payload.extraShifts ?? []),
+          ...(isOrphaned &&
+          savedActiveShift &&
+          action.payload.orphanedShift &&
+          action.payload.orphanedShift.id !== savedActiveShift.id &&
+          !(action.payload.extraShifts ?? []).some(
+            (shift) => shift.id === action.payload.orphanedShift!.id,
+          )
+            ? [action.payload.orphanedShift]
+            : []),
+        ],
         orphanedShift: isOrphaned
           ? savedActiveShift
           : (action.payload.orphanedShift ?? null),
         jobs,
         selectedJobId,
+        trackerDay: action.payload.trackerDay ?? localDate(),
         todayPlan: {
           ...initialAppState.todayPlan,
           ...(action.payload.todayPlan ?? {}),
@@ -422,8 +440,48 @@ const appSlice = createSlice({
         },
       };
     },
+    refreshTrackerDay: (state, action: PayloadAction<string>) => {
+      if (
+        !validDate(action.payload) ||
+        state.trackerDay === action.payload ||
+        state.activeShift
+      )
+        return;
+      const job = state.jobs.find(
+        (job) => job.id === state.selectedJobId && !job.archived,
+      );
+      state.todayPlan = job
+        ? jobPlan(job, state.defaultPlan)
+        : { ...state.defaultPlan };
+      state.reminders.customReminderMinutes = null;
+      state.trackerDay = action.payload;
+    },
     clockIn: (state, action: PayloadAction<Shift>) => {
+      if (
+        state.activeShift ||
+        state.orphanedShift ||
+        state.extraShifts.some(
+          (shift) => shift.jobId === action.payload.jobId,
+        ) ||
+        !state.jobs.some(
+          (job) => job.id === action.payload.jobId && !job.archived,
+        )
+      )
+        return;
+      state.todayPlan =
+        planChanges(state.todayPlan, {}, action.payload) ?? state.todayPlan;
+      state.activeShift = withPlanRates(action.payload, state.todayPlan);
+    },
+    updateActiveShift: (state, action: PayloadAction<Shift>) => {
+      if (
+        !state.activeShift ||
+        state.activeShift.id !== action.payload.id ||
+        action.payload.endedAt
+      )
+        return;
       state.activeShift = action.payload;
+      state.todayPlan =
+        planChanges(state.todayPlan, {}, action.payload) ?? state.todayPlan;
     },
     startExtraShift: (state, action: PayloadAction<Shift>) => {
       if (
@@ -437,6 +495,12 @@ const appSlice = createSlice({
       state.extraShifts.push(action.payload);
     },
     clockOutExtraShift: (state, action: PayloadAction<Shift>) => {
+      if (
+        !state.extraShifts.some((shift) => shift.id === action.payload.id) ||
+        !action.payload.endedAt ||
+        state.history.some((shift) => shift.id === action.payload.id)
+      )
+        return;
       state.extraShifts = state.extraShifts.filter(
         (shift) => shift.id !== action.payload.id,
       );
@@ -495,10 +559,22 @@ const appSlice = createSlice({
       });
     },
     clockOut: (state, action: PayloadAction<Shift>) => {
+      if (
+        state.activeShift?.id !== action.payload.id ||
+        !action.payload.endedAt ||
+        state.history.some((shift) => shift.id === action.payload.id)
+      )
+        return;
       state.activeShift = null;
       state.history.unshift(action.payload);
     },
     resolveOrphanedShift: (state, action: PayloadAction<Shift>) => {
+      if (
+        state.orphanedShift?.id !== action.payload.id ||
+        !action.payload.endedAt ||
+        state.history.some((shift) => shift.id === action.payload.id)
+      )
+        return;
       state.orphanedShift = null;
       state.history.unshift(action.payload);
     },
@@ -534,45 +610,70 @@ const appSlice = createSlice({
       state.scheduledReturnReminderId = null;
     },
     startLunch: (state, action: PayloadAction<string>) => {
-      if (state.activeShift) state.activeShift.lunchStartedAt = action.payload;
+      const shift = state.activeShift;
+      if (
+        !shift ||
+        shift.lunchStartedAt ||
+        shift.breakStartedAt ||
+        shift.historyLunchEnd ||
+        shift.lunchMinutes > 0 ||
+        !state.todayPlan.lunchEnabled ||
+        Date.parse(action.payload) < Date.parse(shift.startedAt)
+      )
+        return;
+      shift.lunchStartedAt = action.payload;
+      shift.historyLunchStart = action.payload;
     },
     endLunch: (state, action: PayloadAction<string>) => {
-      if (state.activeShift?.lunchStartedAt) {
-        state.activeShift.lunchMinutes += Math.max(
-          0,
-          Math.round(
-            (Date.parse(action.payload) -
-              Date.parse(state.activeShift.lunchStartedAt)) /
-              60000,
-          ),
-        );
-        state.activeShift.lunchStartedAt = null;
-      }
+      if (
+        !state.activeShift?.lunchStartedAt ||
+        Date.parse(action.payload) <
+          Date.parse(state.activeShift.lunchStartedAt)
+      )
+        return;
+      state.activeShift = closePauses(state.activeShift, action.payload);
+      state.todayPlan =
+        planChanges(state.todayPlan, {}, state.activeShift) ?? state.todayPlan;
     },
     startBreak: (
       state,
       action: PayloadAction<{ at: string; label?: string }>,
     ) => {
-      if (state.activeShift) {
-        state.activeShift.breakStartedAt = action.payload.at;
-        state.activeShift.breakLabel = action.payload.label ?? "General break";
-      }
+      const shift = state.activeShift;
+      if (
+        !shift ||
+        shift.breakStartedAt ||
+        shift.lunchStartedAt ||
+        Date.parse(action.payload.at) < Date.parse(shift.startedAt)
+      )
+        return;
+      shift.breakStartedAt = action.payload.at;
+      shift.breakLabel = action.payload.label?.trim() || "General break";
+      shift.breaks = [
+        ...(shift.breaks ?? []),
+        {
+          id: `${shift.id}-break-${action.payload.at}`,
+          start: action.payload.at,
+          end: null,
+          label: shift.breakLabel,
+        },
+      ];
     },
     endBreak: (state, action: PayloadAction<string>) => {
-      if (state.activeShift?.breakStartedAt) {
-        state.activeShift.breakMinutes += Math.max(
-          0,
-          Math.round(
-            (Date.parse(action.payload) -
-              Date.parse(state.activeShift.breakStartedAt)) /
-              60000,
-          ),
-        );
-        state.activeShift.breakStartedAt = null;
-        state.activeShift.breakLabel = null;
-      }
+      if (
+        !state.activeShift?.breakStartedAt ||
+        Date.parse(action.payload) <
+          Date.parse(state.activeShift.breakStartedAt)
+      )
+        return;
+      state.activeShift = closePauses(state.activeShift, action.payload);
     },
     addManualShift: (state, action: PayloadAction<Shift>) => {
+      if (
+        state.history.some((shift) => shift.id === action.payload.id) ||
+        state.activeShift?.id === action.payload.id
+      )
+        return;
       state.history.unshift(action.payload);
     },
     setPayVisible: (state, action: PayloadAction<boolean>) => {
@@ -698,10 +799,31 @@ const appSlice = createSlice({
       state.history = state.history.filter((item) => item.id !== shift.id);
     },
     updateTodayPlan: (state, action: PayloadAction<Partial<TodayPlan>>) => {
-      state.todayPlan = { ...state.todayPlan, ...action.payload };
+      const next = planChanges(
+        state.todayPlan,
+        action.payload,
+        state.activeShift,
+      );
+      if (!next) return;
+      state.todayPlan = next;
+      if (state.activeShift)
+        state.activeShift = withPlanRates(state.activeShift, next);
     },
     savePlanAsDefault: (state) => {
-      state.defaultPlan = { ...state.todayPlan };
+      const job = state.jobs.find(
+        (job) => job.id === (state.activeShift?.jobId ?? state.selectedJobId),
+      );
+      if (
+        (state.activeShift?.currency ??
+          job?.currency ??
+          state.preferences.currency) !== state.preferences.currency
+      )
+        return;
+      state.defaultPlan = {
+        ...state.todayPlan,
+        planningMode: "duration",
+        plannedClockOut: null,
+      };
     },
     resetTodayPlan: (state) => {
       const job = state.jobs.find(
@@ -710,6 +832,8 @@ const appSlice = createSlice({
       state.todayPlan = job
         ? jobPlan(job, state.defaultPlan)
         : { ...state.defaultPlan };
+      if (state.activeShift)
+        state.activeShift = withPlanRates(state.activeShift, state.todayPlan);
     },
     upsertJob: (state, action: PayloadAction<MockJob>) => {
       if (validateJob(action.payload) || jobEditError(state, action.payload))
@@ -846,6 +970,8 @@ export const {
   resetLocalData,
   hydrate,
   clockIn,
+  refreshTrackerDay,
+  updateActiveShift,
   startExtraShift,
   clockOutExtraShift,
   updateHistoryShift,

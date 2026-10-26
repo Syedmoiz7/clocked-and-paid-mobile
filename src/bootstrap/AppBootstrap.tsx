@@ -1,11 +1,17 @@
 import { useEffect, useState, type PropsWithChildren } from "react";
 import { AppLoading } from "../components/AppLoading";
 import { loadAppState, loadRecovery, saveAppState } from "../services/storage";
-import { hydrate, initialAppState, setPayVisible } from "../store/appSlice";
+import {
+  hydrate,
+  initialAppState,
+  setPayVisible,
+  refreshTrackerDay,
+} from "../store/appSlice";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
 import { JobReminderHost } from "../features/jobs/JobReminderHost";
 import { PrivacyProvider } from "../features/settings/PrivacyProvider";
-import { Alert, Text, View } from "react-native";
+import { Alert, Text, View, AppState as NativeAppState } from "react-native";
+import { localDate } from "../utils/dateOnly";
 import {
   applyImport,
   backupText,
@@ -20,6 +26,19 @@ export function AppBootstrap({ children }: PropsWithChildren) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const { colors, styles } = useThemeTokens();
+  useEffect(() => {
+    if (!ready) return;
+    const refresh = () => dispatch(refreshTrackerDay(localDate()));
+    refresh();
+    const timer = setInterval(refresh, 60000);
+    const listener = NativeAppState.addEventListener("change", (state) => {
+      if (state === "active") refresh();
+    });
+    return () => {
+      clearInterval(timer);
+      listener.remove();
+    };
+  }, [dispatch, ready]);
 
   useEffect(() => {
     let active = true;

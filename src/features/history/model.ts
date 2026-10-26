@@ -155,12 +155,16 @@ export function wagesFor(
   const job = jobs.find((job) => job.id === shift.jobId);
   const regular = Math.min(
     minutes,
-    (job?.overtimeThreshold ?? plan.overtimeThreshold) * 60,
+    (shift.overtimeThreshold ??
+      job?.overtimeThreshold ??
+      plan.overtimeThreshold) * 60,
   );
   return (
     ((regular +
       Math.max(0, minutes - regular) *
-        (job?.overtimeMultiplier ?? plan.overtimeMultiplier)) /
+        (shift.overtimeMultiplier ??
+          job?.overtimeMultiplier ??
+          plan.overtimeMultiplier)) /
       60) *
     rateFor(shift, jobs, plan)
   );

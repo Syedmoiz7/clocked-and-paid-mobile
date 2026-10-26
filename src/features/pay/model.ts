@@ -488,7 +488,8 @@ export function financialSummary(
     overtime += Math.max(
       0,
       amounts.minutes -
-        (data.jobs.find((job) => job.id === id)?.overtimeThreshold ??
+        (entry.overtimeThreshold ??
+          data.jobs.find((job) => job.id === id)?.overtimeThreshold ??
           data.defaultPlan.overtimeThreshold) *
           60,
     );

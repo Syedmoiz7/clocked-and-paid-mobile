@@ -13,6 +13,8 @@
     "test:pay": "node --test tests/pay.test.cjs",
     "test:jobs": "node --test tests/jobs.test.cjs",
     "test:settings": "node --test tests/settings.test.cjs",
+    "test:tracker": "node --test tests/tracker.test.cjs tests/tracker-summary.test.cjs tests/calculator.test.cjs tests/tracker-ux.test.cjs",
+    "test:calculator": "node --test tests/calculator.test.cjs",
     "test": "node --test tests/*.test.cjs"
   },
   "dependencies": {

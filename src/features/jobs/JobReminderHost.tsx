@@ -79,6 +79,7 @@ export function JobReminderHost() {
                 ? {
                     ...job,
                     reminderSettings: { ...settings, custom },
+                    lunchEnabled: data.todayPlan.lunchEnabled,
                     lunchMinutes: data.todayPlan.lunchMinutes,
                   }
                 : { ...job, reminderSettings: settings },
@@ -90,6 +91,7 @@ export function JobReminderHost() {
       data.extraShifts,
       data.jobs,
       data.todayPlan.lunchMinutes,
+      data.todayPlan.lunchEnabled,
       data.preferences.defaultReminders,
       data.reminders,
     ],

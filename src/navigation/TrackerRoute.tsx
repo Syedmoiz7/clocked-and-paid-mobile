@@ -1,6 +1,7 @@
-import { useCallback, useState } from "react";
-import { TipsDialog, type TipsRequest } from "../components/TipsDialog";
+import { useRef, useState } from "react";
 import { Alert } from "react-native";
+import * as Crypto from "expo-crypto";
+import { TipsDialog, type TipsRequest } from "../components/TipsDialog";
 import { TrackerScreen } from "../screens/TrackerScreen";
 import {
   addManualShift,
@@ -17,29 +18,37 @@ import {
   savePlanAsDefault,
   selectJob,
   setNotificationPermission,
-  setScheduledReturnReminder,
   startBreak,
   startExtraShift,
   startLunch,
+  updateActiveShift,
   updateBreakPreference,
   updateHistoryShift,
   updateReminders,
   updateTodayPlan,
+  refreshTrackerDay,
 } from "../store/appSlice";
-import { useAppDispatch, useAppSelector } from "../store/hooks";
-import type { MockJob, Shift } from "../types";
-import {
-  cancelReminder,
-  requestReminderPermission,
-} from "../services/notifications";
-import { localDate } from "../features/history/model";
+import { useAppDispatch, useAppSelector, useAppStore } from "../store/hooks";
+import type { Shift } from "../types";
+import { requestReminderPermission } from "../services/notifications";
+import { localDate, wagesFor } from "../features/history/model";
+import { jobPlan } from "../features/jobs/model";
 import { entitlementsFor } from "../services/entitlements";
 import { setPayVisible } from "../store/appSlice";
+import {
+  finishShift,
+  prepareRecovery,
+  manualShift,
+  withPlanRates,
+  type ManualTimes,
+} from "../features/tracker/model";
+import { commitTrackerAction } from "../features/tracker/commit";
+import { saveAppState } from "../services/storage";
 
-function createShift(jobId: string): Shift {
+function createShift(jobId: string, currency: string): Shift {
   const now = new Date().toISOString();
   return {
-    id: String(Date.now()),
+    id: Crypto.randomUUID(),
     date: localDate(new Date(now)),
     startedAt: now,
     endedAt: null,
@@ -47,75 +56,47 @@ function createShift(jobId: string): Shift {
     breakMinutes: 0,
     earnings: 0,
     jobId,
+    currency,
   };
 }
-
-function timeMinutes(value: string) {
-  const [hours = NaN, minutes = NaN] = value.split(":").map(Number);
-  return Number.isInteger(hours) && Number.isInteger(minutes)
-    ? hours * 60 + minutes
-    : null;
-}
-
 export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
+  const data = useAppSelector((state) => state.app),
+    dispatch = useAppDispatch(),
+    store = useAppStore();
   const [tipsRequest, setTipsRequest] = useState<TipsRequest | null>(null);
-  const dispatch = useAppDispatch();
-  const {
-    activeShift,
-    extraShifts,
-    orphanedShift,
-    history,
-    hourlyRate,
-    preferences,
-    payVisible,
-    isPremium,
-    todayPlan,
-    reminders,
-    jobs,
-    selectedJobId,
-    deductionRate,
-    defaultPlan,
-    breakIncludedInRemaining,
-    notificationPermission,
-    notificationPromptDismissed,
-    scheduledLunchReminderId,
-    scheduledReturnReminderId,
-  } = useAppSelector((state) => state.app);
-  const activeJob = jobs.find(
-    (job) => job.id === (activeShift?.jobId ?? selectedJobId),
-  );
-
-  const calculateEarnings = useCallback(
-    (
-      startedAt: string,
-      endedAt: string,
-      lunchMinutes: number,
-      rate: number,
-      job?: MockJob,
-    ) => {
-      const workedMinutes = Math.max(
-        0,
-        (Date.parse(endedAt) - Date.parse(startedAt)) / 60000 - lunchMinutes,
+  const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
+  const read = () => store.getState().app;
+  const commit = async (
+    action: Parameters<typeof dispatch>[0],
+  ): Promise<boolean> => {
+    if (saving.current) return false;
+    saving.current = true;
+    setBusy(true);
+    try {
+      return await commitTrackerAction(action, {
+        read,
+        write: saveAppState,
+        dispatch,
+      });
+    } catch {
+      Alert.alert(
+        "Could not save",
+        "Your running shift and existing records are still available. Keep the app open and try again.",
       );
-      const regularMinutes = Math.min(
-        workedMinutes,
-        (job?.overtimeThreshold ?? todayPlan.overtimeThreshold) * 60,
+      return false;
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
+  };
+  const clockInNow = () => {
+    if (saving.current) return;
+    dispatch(refreshTrackerDay(localDate()));
+    const current = read(),
+      job = current.jobs.find(
+        (job) => job.id === current.selectedJobId && !job.archived,
       );
-      const overtimeMinutes = Math.max(0, workedMinutes - regularMinutes);
-      return (
-        (regularMinutes / 60) * rate +
-        (overtimeMinutes / 60) *
-          rate *
-          (job?.overtimeMultiplier ?? todayPlan.overtimeMultiplier)
-      );
-    },
-    [todayPlan.overtimeMultiplier, todayPlan.overtimeThreshold],
-  );
-
-  const handleClockIn = useCallback(() => {
-    const job = jobs.find(
-      (item) => item.id === selectedJobId && !item.archived,
-    );
     if (!job) {
       Alert.alert(
         "Add a job",
@@ -123,441 +104,246 @@ export function TrackerRoute({ onPremium }: { onPremium: () => void }) {
       );
       return;
     }
-    const shift = {
-      ...createShift(selectedJobId),
-      currency: job.currency ?? preferences.currency,
-    };
-    dispatch(clockIn(shift));
-  }, [dispatch, jobs, selectedJobId, preferences.currency]);
-
-  const handleStartExtraShift = useCallback(
-    (jobId: string) => {
-      if (!preferences.allowConcurrentShifts) {
-        Alert.alert(
-          "Concurrent jobs disabled",
-          "Enable concurrent jobs in Settings first.",
-        );
-        return;
-      }
-      if (!entitlementsFor({ isPremium }).multipleSimultaneousJobs) {
-        onPremium();
-        return;
-      }
-      const job = jobs.find((item) => item.id === jobId && !item.archived);
-      if (
-        !job ||
-        activeShift?.jobId === jobId ||
-        extraShifts.some((item) => item.jobId === jobId)
-      )
-        return;
-      dispatch(
-        startExtraShift({
-          ...createShift(jobId),
-          currency: job.currency ?? preferences.currency,
-        }),
-      );
-    },
-    [
-      dispatch,
-      jobs,
-      activeShift,
-      extraShifts,
-      isPremium,
-      onPremium,
-      preferences.allowConcurrentShifts,
-      preferences.currency,
-    ],
-  );
-
-  const handleClockOutExtraShift = useCallback(
-    (shift: Shift) => {
-      const job = jobs.find((item) => item.id === shift.jobId);
-      const finish = (tips = 0, tipType: Shift["tipType"] = null) => {
-        const endedAt = new Date().toISOString();
-        dispatch(
-          clockOutExtraShift({
-            ...shift,
-            endedAt,
-            tips,
-            tipType,
-            earnings: calculateEarnings(
-              shift.startedAt,
-              endedAt,
-              shift.lunchMinutes + shift.breakMinutes,
-              jobs.find((job) => job.id === shift.jobId)?.hourlyRate ??
-                hourlyRate,
-              jobs.find((job) => job.id === shift.jobId),
-            ),
-          }),
-        );
-      };
-      if (job?.enableTips)
-        setTipsRequest({
-          jobName: job.name,
-          currency: shift.currency ?? job.currency ?? preferences.currency,
-          onConfirm: finish,
-        });
-      else finish();
-    },
-    [calculateEarnings, dispatch, hourlyRate, jobs, preferences.currency],
-  );
-
-  const completeClockOut = useCallback(
-    (tips = 0, tipType: Shift["tipType"] = null) => {
-      if (!activeShift) return;
-      const endedAt = new Date().toISOString();
-      void Promise.all([
-        cancelReminder(scheduledLunchReminderId),
-        cancelReminder(scheduledReturnReminderId),
-      ]).then(() => dispatch(clearScheduledReminders()));
-      dispatch(
-        clockOut({
-          ...activeShift,
-          endedAt,
-          tips: tips || undefined,
-          tipType: tips ? tipType : null,
-          earnings: calculateEarnings(
-            activeShift.startedAt,
-            endedAt,
-            activeShift.lunchMinutes + activeShift.breakMinutes,
-            activeJob?.hourlyRate ?? hourlyRate,
-          ),
-        }),
-      );
-    },
-    [
-      activeJob?.hourlyRate,
-      activeShift,
-      calculateEarnings,
-      dispatch,
-      hourlyRate,
-      scheduledLunchReminderId,
-      scheduledReturnReminderId,
-    ],
-  );
-
-  const handleClockOut = useCallback(() => {
-    if (!activeShift) return;
-    if (!activeJob?.enableTips) {
-      completeClockOut();
-      return;
-    }
-    setTipsRequest({
-      jobName: activeJob.name,
-      currency:
-        activeShift.currency ?? activeJob.currency ?? preferences.currency,
-      onConfirm: completeClockOut,
-    });
-  }, [activeShift, activeJob, completeClockOut, preferences.currency]);
-
-  const handleResolveOrphan = useCallback(() => {
-    if (!orphanedShift) return;
-    const endedAt = new Date().toISOString();
     dispatch(
-      resolveOrphanedShift({
-        ...orphanedShift,
-        endedAt,
-        earnings: calculateEarnings(
-          orphanedShift.startedAt,
-          endedAt,
-          orphanedShift.lunchMinutes + orphanedShift.breakMinutes,
-          activeJob?.hourlyRate ?? hourlyRate,
-        ),
-      }),
+      clockIn(
+        createShift(job.id, job.currency ?? current.preferences.currency),
+      ),
     );
-  }, [
-    activeJob?.hourlyRate,
-    calculateEarnings,
-    dispatch,
-    hourlyRate,
-    orphanedShift,
-  ]);
-
-  const handleLunch = useCallback(() => {
-    if (!activeShift) return;
-    if (activeShift.lunchStartedAt) {
-      void cancelReminder(scheduledReturnReminderId).then(() =>
-        dispatch(setScheduledReturnReminder(null)),
-      );
-      dispatch(endLunch(new Date().toISOString()));
-    } else {
-      dispatch(startLunch(new Date().toISOString()));
-    }
-  }, [
-    activeShift,
-    activeJob,
-    dispatch,
-    notificationPermission,
-    reminders.returnReminder,
-    scheduledReturnReminderId,
-    todayPlan.lunchMinutes,
-  ]);
-
-  const handleRequestNotifications = useCallback(() => {
-    void requestReminderPermission().then((permission) =>
-      dispatch(setNotificationPermission(permission)),
-    );
-  }, [dispatch]);
-
-  const handleBreak = useCallback(
-    (label?: unknown) => {
-      if (!activeShift) return;
-      if (activeShift.breakStartedAt) {
-        dispatch(endBreak(new Date().toISOString()));
-        return;
-      }
-      if (typeof label === "string") {
-        dispatch(startBreak({ at: new Date().toISOString(), label }));
-        return;
-      }
-      Alert.prompt(
-        "Start break",
-        "Add a label so this break is easy to identify later.",
-        [
-          {
-            text: "Start break",
-            onPress: (value: string | undefined) =>
-              dispatch(
-                startBreak({
-                  at: new Date().toISOString(),
-                  label: value?.trim() || "General break",
-                }),
-              ),
-          },
-          { text: "Cancel", style: "cancel" },
-        ],
-        "plain-text",
-        "General break",
-      );
-    },
-    [activeShift, dispatch],
-  );
-
-  const handleManualTimes = useCallback(
-    (times: {
-      start: string;
-      lunchStart: string;
-      lunchEnd: string;
-      end: string;
-    }): boolean => {
-      if (!activeJob || activeJob.archived) return false;
-      const parseToday = (value: string) => {
-        const [hours = NaN, minutes = NaN] = value.split(":").map(Number);
-        if (
-          !Number.isInteger(hours) ||
-          !Number.isInteger(minutes) ||
-          hours < 0 ||
-          hours > 23 ||
-          minutes < 0 ||
-          minutes > 59
-        )
-          return null;
-        const date = new Date();
-        date.setHours(hours, minutes, 0, 0);
-        return date;
+  };
+  const requestClockOut = (id: string, extra = false) => {
+    if (saving.current || tipsRequest) return;
+    const current = read(),
+      source = extra
+        ? current.extraShifts.find((shift) => shift.id === id)
+        : current.activeShift;
+    if (!source || source.id !== id) return;
+    const job = current.jobs.find((job) => job.id === source.jobId);
+    const finish = (tips = 0, tipType: Shift["tipType"] = null) => {
+      const latest = read(),
+        shift = extra
+          ? latest.extraShifts.find((item) => item.id === id)
+          : latest.activeShift;
+      if (!shift || shift.id !== id) return;
+      const result = {
+        ...finishShift(shift, new Date().toISOString(), latest, !extra),
+        tips,
+        tipType: tips ? tipType : null,
       };
-      const startedAt = parseToday(times.start);
-      const lunchStartedAt = parseToday(times.lunchStart);
-      const lunchEndedAt = parseToday(times.lunchEnd);
-      let endedAt = parseToday(times.end);
-      if (!startedAt || !endedAt) return false;
-      if (endedAt <= startedAt)
-        endedAt = new Date(endedAt.getTime() + 24 * 60 * 60 * 1000);
-      if (
-        (lunchStartedAt && !lunchEndedAt) ||
-        (!lunchStartedAt && lunchEndedAt)
-      )
-        return false;
-      let normalizedLunchEnd = lunchEndedAt;
-      if (
-        lunchStartedAt &&
-        normalizedLunchEnd &&
-        normalizedLunchEnd <= lunchStartedAt
-      )
-        normalizedLunchEnd = new Date(
-          normalizedLunchEnd.getTime() + 24 * 60 * 60 * 1000,
-        );
-      if (
-        lunchStartedAt &&
-        normalizedLunchEnd &&
-        (lunchStartedAt < startedAt || normalizedLunchEnd > endedAt)
-      )
-        return false;
-      const lunchMinutes =
-        lunchStartedAt && normalizedLunchEnd
-          ? Math.round(
-              (normalizedLunchEnd.getTime() - lunchStartedAt.getTime()) / 60000,
-            )
-          : 0;
-      const completedShift = {
-        ...(activeShift ?? createShift(selectedJobId)),
-        startedAt: startedAt.toISOString(),
-        endedAt: endedAt.toISOString(),
-        date: localDate(startedAt),
+      void commit(extra ? clockOutExtraShift(result) : clockOut(result)).then(
+        (saved) => {
+          if (saved && !extra) dispatch(clearScheduledReminders());
+        },
+      );
+    };
+    if (job?.enableTips)
+      setTipsRequest({
+        jobName: job.name,
         currency:
-          activeShift?.currency ?? activeJob.currency ?? preferences.currency,
-        lunchMinutes,
-        lunchStartedAt: null,
-        breakStartedAt: null,
-        jobId: activeShift?.jobId ?? selectedJobId,
-        earnings: calculateEarnings(
-          startedAt.toISOString(),
-          endedAt.toISOString(),
-          lunchMinutes,
-          activeJob?.hourlyRate ?? hourlyRate,
-        ),
-      };
-      dispatch(
-        activeShift ? clockOut(completedShift) : addManualShift(completedShift),
+          source.currency ?? job.currency ?? current.preferences.currency,
+        onConfirm: finish,
+      });
+    else finish();
+  };
+  const saveTimes = async (times: ManualTimes, id?: string) => {
+    const current = read();
+    const existing = id
+      ? current.history.find((shift) => shift.id === id)
+      : current.activeShift;
+    if (id && !existing) return false;
+    const job = current.jobs.find(
+      (job) => job.id === (existing?.jobId ?? current.selectedJobId),
+    );
+    if (!existing && (!job || job.archived || current.orphanedShift))
+      return false;
+    if (
+      !existing &&
+      !times.end &&
+      current.extraShifts.some((shift) => shift.jobId === job?.id)
+    ) {
+      Alert.alert(
+        "Shift already running",
+        "Clock out the additional shift for this job before starting it again.",
       );
-      return true;
-    },
-    [
-      activeJob,
-      activeShift,
-      calculateEarnings,
-      dispatch,
-      hourlyRate,
-      selectedJobId,
-      preferences.currency,
-    ],
-  );
-
-  const handleEditTimes = useCallback(
-    (
-      id: string,
-      times: {
-        start: string;
-        lunchStart: string;
-        lunchEnd: string;
-        end: string;
-      },
-    ): boolean => {
-      const parse = (value: string) => {
-        const [hours = NaN, minutes = NaN] = value.split(":").map(Number);
-        if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
-        const date = new Date();
-        date.setHours(hours, minutes, 0, 0);
-        return date;
-      };
-      const start = parse(times.start);
-      const end = parse(times.end);
-      const lunchStart = times.lunchStart ? parse(times.lunchStart) : null;
-      const lunchEnd = times.lunchEnd ? parse(times.lunchEnd) : null;
-      if (!start || !end) return false;
-      if (end <= start) end.setDate(end.getDate() + 1);
-      if ((lunchStart && !lunchEnd) || (!lunchStart && lunchEnd)) return false;
-      if (lunchStart && lunchEnd && lunchEnd <= lunchStart)
-        lunchEnd.setDate(lunchEnd.getDate() + 1);
-      if (lunchStart && lunchEnd && (lunchStart < start || lunchEnd > end))
-        return false;
-      const lunchMinutes =
-        lunchStart && lunchEnd
-          ? Math.round((lunchEnd.getTime() - lunchStart.getTime()) / 60000)
-          : 0;
-      const existing = history.find((shift) => shift.id === id);
-      if (!existing) return false;
-      const startedAt = start.toISOString();
-      const endedAt = end.toISOString();
-      dispatch(
-        updateHistoryShift({
-          id,
-          changes: {
-            startedAt,
-            endedAt,
-            date: localDate(start),
-            lunchMinutes,
-            lunchStartedAt: null,
-            earnings: calculateEarnings(
-              startedAt,
-              endedAt,
-              lunchMinutes + (existing.breakMinutes ?? 0),
-              jobs.find((job) => job.id === existing.jobId)?.hourlyRate ??
-                hourlyRate,
-              jobs.find((job) => job.id === existing.jobId),
-            ),
-          },
-        }),
-      );
-      return true;
-    },
-    [calculateEarnings, dispatch, history, hourlyRate, jobs],
-  );
-
-  const handlePlanChange = useCallback(
-    (changes: Partial<typeof todayPlan>) => {
-      const mode = changes.planningMode ?? todayPlan.planningMode;
-      if (mode === "end-time" && changes.plannedClockOut) {
-        const clockIn = activeShift
-          ? new Date(activeShift.startedAt)
-          : new Date();
-        const start = clockIn.getHours() * 60 + clockIn.getMinutes();
-        const end = timeMinutes(changes.plannedClockOut);
-        if (end !== null) {
-          const elapsed = end >= start ? end - start : end + 1440 - start;
-          const lunch =
-            (changes.lunchEnabled ?? todayPlan.lunchEnabled)
-              ? (changes.lunchMinutes ?? todayPlan.lunchMinutes)
-              : 0;
-          changes = {
-            ...changes,
-            plannedHours: Math.max(0, (elapsed - lunch) / 60),
-          };
-        }
-      }
-      dispatch(updateTodayPlan(changes));
-    },
-    [activeShift, dispatch, todayPlan],
-  );
-
+      return false;
+    }
+    const result = manualShift(
+      existing ??
+        createShift(job!.id, job!.currency ?? current.preferences.currency),
+      times,
+    );
+    if ("error" in result) {
+      Alert.alert("Check times", result.error);
+      return false;
+    }
+    let shift = result.shift;
+    if (!id) shift = withPlanRates(shift, current.todayPlan);
+    shift.earnings = wagesFor(
+      shift,
+      current.jobs,
+      current.defaultPlan,
+      Date.now(),
+    );
+    const action = id
+      ? updateHistoryShift({ id, changes: shift })
+      : shift.endedAt
+        ? current.activeShift
+          ? clockOut(shift)
+          : addManualShift(shift)
+        : current.activeShift
+          ? updateActiveShift(shift)
+          : clockIn(shift);
+    return commit(action);
+  };
+  const recover = async (id: string, endedAt: string): Promise<boolean> => {
+    const current = read(),
+      shift = current.orphanedShift;
+    if (!shift || shift.id !== id) return false;
+    const result = prepareRecovery(shift, endedAt, current);
+    if ("error" in result) {
+      Alert.alert("Check recovery times", result.error);
+      return false;
+    }
+    return commit(resolveOrphanedShift(result.entry));
+  };
   return (
     <>
       <TrackerScreen
-        canCalculate={entitlementsFor({ isPremium }).calculator}
-        preferences={preferences}
-        payVisible={payVisible}
+        busy={busy}
+        canCalculate={entitlementsFor(data).calculator}
+        preferences={data.preferences}
+        payVisible={data.payVisible}
         onPayVisible={(value) => dispatch(setPayVisible(value))}
-        activeShift={activeShift}
-        extraShifts={extraShifts}
-        orphanedShift={orphanedShift}
-        completedToday={history.filter(
+        activeShift={data.activeShift}
+        extraShifts={data.extraShifts}
+        orphanedShift={data.orphanedShift}
+        completedToday={data.history.filter(
           (shift) =>
             shift.date === localDate() &&
             shift.entryType !== "project" &&
             !shift.missingClockIn &&
             Boolean(shift.endedAt),
         )}
-        todayPlan={todayPlan}
-        defaultPlan={defaultPlan}
-        jobs={jobs}
-        selectedJobId={selectedJobId}
-        deductionRate={deductionRate}
-        breakIncludedInRemaining={breakIncludedInRemaining}
-        reminders={reminders}
-        notificationPermission={notificationPermission}
-        notificationPromptDismissed={notificationPromptDismissed}
-        onPlanChange={handlePlanChange}
-        onSavePlanDefault={() => dispatch(savePlanAsDefault())}
-        onResetPlan={() => dispatch(resetTodayPlan())}
-        onJobChange={(jobId) => dispatch(selectJob(jobId))}
+        todayPlan={data.todayPlan}
+        defaultPlan={data.defaultPlan}
+        jobs={data.jobs}
+        selectedJobId={data.selectedJobId}
+        deductions={data.deductions}
+        summaryData={data}
+        breakIncludedInRemaining={data.breakIncludedInRemaining}
+        reminders={data.reminders}
+        notificationPermission={data.notificationPermission}
+        notificationPromptDismissed={data.notificationPromptDismissed}
+        onPlanChange={(changes) => {
+          if (!saving.current) dispatch(updateTodayPlan(changes));
+        }}
+        onSavePlanDefault={() => {
+          if (saving.current) return;
+          const current = read(),
+            job = current.jobs.find(
+              (job) =>
+                job.id ===
+                (current.activeShift?.jobId ?? current.selectedJobId),
+            );
+          if (
+            (current.activeShift?.currency ??
+              job?.currency ??
+              current.preferences.currency) !== current.preferences.currency
+          )
+            return;
+          dispatch(savePlanAsDefault());
+          Alert.alert(
+            "Global defaults saved",
+            "Saved global work hours, lunch and pay defaults. Job-specific rate, lunch and overtime settings still take priority when resetting or starting a job. Today's clock-out target stays a daily override.",
+          );
+        }}
+        onResetPlan={() => {
+          if (!saving.current) dispatch(resetTodayPlan());
+        }}
+        onJobChange={(id) => dispatch(selectJob(id))}
         onRemindersChange={(changes) => dispatch(updateReminders(changes))}
-        onRequestNotifications={handleRequestNotifications}
+        onRequestNotifications={() => {
+          void requestReminderPermission()
+            .then((permission) =>
+              dispatch(setNotificationPermission(permission)),
+            )
+            .catch(() =>
+              Alert.alert(
+                "Notifications unavailable",
+                "Check the app's notification permission in device settings.",
+              ),
+            );
+        }}
         onDismissNotificationPrompt={() =>
           dispatch(dismissNotificationPrompt())
         }
-        onClockIn={handleClockIn}
-        onStartExtraShift={handleStartExtraShift}
-        onClockOutExtraShift={handleClockOutExtraShift}
-        onClockOut={handleClockOut}
-        onResolveOrphanedShift={handleResolveOrphan}
-        onDiscardOrphanedShift={() => dispatch(discardOrphanedShift())}
+        onClockIn={clockInNow}
+        onClockOut={() => {
+          const shift = read().activeShift;
+          if (shift) requestClockOut(shift.id);
+        }}
+        onStartExtraShift={(jobId) => {
+          if (saving.current) return;
+          const current = read();
+          if (!entitlementsFor(current).multipleSimultaneousJobs) {
+            onPremium();
+            return;
+          }
+          if (!current.preferences.allowConcurrentShifts) return;
+          const job = current.jobs.find(
+            (job) => job.id === jobId && !job.archived,
+          );
+          if (job)
+            dispatch(
+              startExtraShift(
+                withPlanRates(
+                  createShift(
+                    jobId,
+                    job.currency ?? current.preferences.currency,
+                  ),
+                  jobPlan(job, current.defaultPlan),
+                ),
+              ),
+            );
+        }}
+        onClockOutExtraShift={(shift) => requestClockOut(shift.id, true)}
+        onResolveOrphanedShift={recover}
+        onDiscardOrphanedShift={() =>
+          Alert.alert(
+            "Discard unfinished shift?",
+            "This removes the unsaved shift. Choose a recovery clock-out time to keep the work instead.",
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Discard",
+                style: "destructive",
+                onPress: () => {
+                  void commit(discardOrphanedShift());
+                },
+              },
+            ],
+          )
+        }
         onToggleBreakRemaining={(value) =>
           dispatch(updateBreakPreference(value))
         }
-        onLunch={handleLunch}
-        onBreak={handleBreak}
-        onManualTimes={handleManualTimes}
-        onEditTimes={handleEditTimes}
+        onLunch={() => {
+          if (saving.current) return;
+          dispatch(
+            read().activeShift?.lunchStartedAt
+              ? endLunch(new Date().toISOString())
+              : startLunch(new Date().toISOString()),
+          );
+        }}
+        onBreak={(label) => {
+          if (saving.current) return;
+          dispatch(
+            read().activeShift?.breakStartedAt
+              ? endBreak(new Date().toISOString())
+              : startBreak({ at: new Date().toISOString(), label }),
+          );
+        }}
+        onManualTimes={(times) => saveTimes(times)}
+        onEditTimes={(id, times) => saveTimes(times, id)}
         onPremium={onPremium}
       />
       {tipsRequest && (

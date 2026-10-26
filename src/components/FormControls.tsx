@@ -6,6 +6,7 @@ import {
   Text,
   TextInput,
   View,
+  Platform,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useThemeTokens } from "../providers/ThemeProvider";
@@ -81,6 +82,7 @@ export function Choices({
   return (
     <ScrollView
       horizontal
+      keyboardShouldPersistTaps="handled"
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={{ gap: 8, paddingVertical: 8 }}
     >
@@ -139,23 +141,32 @@ export function DateField({
         <View>
           <DateTimePicker
             mode="date"
-            display="spinner"
+            display={Platform.OS === "ios" ? "spinner" : "default"}
             themeVariant="dark"
             textColor={colors.text}
             value={draft}
             onChange={(event, date) => {
               if (event.type === "dismissed") setOpen(false);
-              else if (date) setDraft(date);
+              else if (date) {
+                if (Platform.OS === "android") {
+                  onChange(localDate(date));
+                  setOpen(false);
+                } else setDraft(date);
+              }
             }}
           />
-          <Action
-            title="Done"
-            onPress={() => {
-              onChange(localDate(draft));
-              setOpen(false);
-            }}
-          />
-          <Action title="Cancel" onPress={() => setOpen(false)} />
+          {Platform.OS !== "android" && (
+            <>
+              <Action
+                title="Done"
+                onPress={() => {
+                  onChange(localDate(draft));
+                  setOpen(false);
+                }}
+              />
+              <Action title="Cancel" onPress={() => setOpen(false)} />
+            </>
+          )}
         </View>
       )}
     </View>

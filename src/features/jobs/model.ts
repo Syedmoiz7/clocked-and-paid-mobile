@@ -320,6 +320,7 @@ export function jobAlerts(shift: Shift, job: MockJob): JobAlert[] {
       });
   };
   if (
+    job.lunchEnabled !== false &&
     !shift.lunchStartedAt &&
     !shift.lunchMinutes &&
     settings.lunchMode !== "off"
