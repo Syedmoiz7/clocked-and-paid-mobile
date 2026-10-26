@@ -1,6 +1,5 @@
-import { useState } from "react";
-import { Alert, Modal, ScrollView, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useEffect, useState } from "react";
+import { Alert, Text, View } from "react-native";
 import type { AppState, MockPaycheck, PaySchedule } from "../../types";
 import { Action, Choices } from "../../components/FormControls";
 import { localDate, money, selectable } from "../history/model";
@@ -8,66 +7,114 @@ import { addDays, payPeriod } from "../history/payPeriods";
 import { useThemeTokens } from "../../providers/ThemeProvider";
 import { paycheckDraft, scheduleFor, type Bounds } from "./model";
 import { ReceiptForm, ScheduleForm } from "./Forms";
+import { PayModal } from "./PayModal";
 
 export function Paychecks({
   data,
+  busy,
+  jobId,
+  currency,
+  bounds: selectedBounds,
   onRecord,
   onDelete,
   onMarkPaid,
   onSchedule,
 }: {
   data: AppState;
-  onRecord: (record: MockPaycheck, markShifts: boolean) => string | null;
+  busy: boolean;
+  jobId: string | null;
+  currency: string;
+  bounds: Bounds;
+  onRecord: (
+    record: MockPaycheck,
+    markShifts: boolean,
+  ) => Promise<string | null>;
   onDelete: (id: string) => void;
   onMarkPaid: (ids: string[]) => void;
   onSchedule: (
     scope: string,
     schedule: PaySchedule,
     applyToJob: boolean,
-  ) => void;
+  ) => Promise<string | null>;
 }) {
-  const { colors, styles } = useThemeTokens();
+  const { styles } = useThemeTokens();
   const [receipt, setReceipt] = useState<{
     jobId: string;
     bounds: Bounds;
   } | null>(null);
-  const [manualJob, setManualJob] = useState(data.jobs[0]?.id ?? "");
+  const [manualJob, setManualJob] = useState(jobId ?? data.jobs[0]?.id ?? "");
+  useEffect(
+    () => setManualJob(jobId ?? data.jobs[0]?.id ?? ""),
+    [jobId, data.jobs],
+  );
   const [setupJobId, setSetupJobId] = useState<string | null>(null);
   const scheduled = data.jobs.filter(
-    (job) => job.payFrequency && job.payPeriodStart,
+    (job) =>
+      !job.archived &&
+      (!jobId || job.id === jobId) &&
+      (job.currency ?? data.preferences.currency) === currency &&
+      job.payFrequency &&
+      job.payPeriodStart,
   );
-  const fmt = (value: number, currency = "USD") =>
-    data.payVisible ? money(value, currency) : "•••••";
+  const receipts = data.paychecks.filter(
+    (record) =>
+      record.paid &&
+      (!jobId || record.jobId === jobId) &&
+      (record.currency ??
+        data.jobs.find((job) => job.id === record.jobId)?.currency ??
+        data.preferences.currency) === currency &&
+      record.startDate <= selectedBounds.end &&
+      record.endDate >= selectedBounds.start,
+  );
+  const fmt = (value: number, code = currency) =>
+    data.payVisible ? money(value, code) : "•••••";
   return (
     <View>
+      <Text style={styles.cardMeta}>
+        Scheduled cards show the current and previous periods for the selected
+        job/currency. Received receipts below use the selected dates.
+      </Text>
       {!scheduled.length && (
         <>
           <Text style={styles.cardMeta}>
             Set a pay schedule for a job to see current and overdue paychecks.
           </Text>
-          {data.jobs.map((job) => (
-            <Action
-              key={job.id}
-              title={`Set up ${job.name}`}
-              onPress={() => setSetupJobId(job.id)}
-            />
-          ))}
+          {data.jobs
+            .filter(
+              (job) =>
+                !job.archived &&
+                (!jobId || job.id === jobId) &&
+                (job.currency ?? data.preferences.currency) === currency,
+            )
+            .map((job) => (
+              <Action
+                key={job.id}
+                title={`Set up ${job.name}`}
+                onPress={() => setSetupJobId(job.id)}
+              />
+            ))}
         </>
       )}
       {setupJobId && (
-        <ScheduleForm
-          key={setupJobId}
-          initial={
-            data.paySchedules[setupJobId] ??
-            scheduleFor("biweekly", localDate())
-          }
-          jobId={setupJobId}
-          onSave={(schedule, apply) => {
-            onSchedule(setupJobId, schedule, apply);
-            setSetupJobId(null);
-          }}
-          onCancel={() => setSetupJobId(null)}
-        />
+        <PayModal
+          title="Job pay schedule"
+          busy={busy}
+          onClose={() => setSetupJobId(null)}
+        >
+          <ScheduleForm
+            key={setupJobId}
+            initial={
+              data.paySchedules[setupJobId] ??
+              scheduleFor("biweekly", localDate())
+            }
+            jobId={setupJobId}
+            onSave={async (schedule, apply) => {
+              const error = await onSchedule(setupJobId, schedule, apply);
+              if (!error) setSetupJobId(null);
+              return error;
+            }}
+          />
+        </PayModal>
       )}
       {scheduled.flatMap((job) => {
         const current = payPeriod(localDate(), job)!;
@@ -76,6 +123,8 @@ export function Paychecks({
           const received = data.paychecks.find(
             (record) =>
               record.jobId === job.id &&
+              (record.currency ?? job.currency ?? data.preferences.currency) ===
+                currency &&
               record.startDate === bounds.start &&
               record.endDate === bounds.end &&
               record.paid,
@@ -133,11 +182,12 @@ export function Paychecks({
                   </Text>
                   <Action
                     title="Mark paycheck received"
+                    disabled={busy}
                     onPress={() => setReceipt({ jobId: job.id, bounds })}
                   />
                   <Action
                     title="Quick mark unpaid shifts as paid"
-                    disabled={!unpaid.length}
+                    disabled={busy || !unpaid.length}
                     onPress={() =>
                       Alert.alert(
                         "Mark these shifts paid?",
@@ -159,60 +209,52 @@ export function Paychecks({
           );
         });
       })}
-      <Choices
-        options={data.jobs.map((job) => ({ value: job.id, label: job.name }))}
-        value={manualJob}
-        onChange={setManualJob}
-      />
+      {!jobId && (
+        <Choices
+          options={data.jobs.map((job) => ({ value: job.id, label: job.name }))}
+          value={manualJob}
+          onChange={setManualJob}
+        />
+      )}
       <Action
         title="Record a received paycheck"
-        disabled={!manualJob}
+        disabled={busy || !manualJob}
         onPress={() => {
-          const job = data.jobs.find((job) => job.id === manualJob);
-          const bounds = job ? payPeriod(localDate(), job) : null;
           setReceipt({
             jobId: manualJob,
-            bounds: bounds ?? {
-              start: `${localDate().slice(0, 7)}-01`,
-              end: localDate(),
-            },
+            bounds: selectedBounds,
           });
         }}
       />
-      <Modal
-        visible={Boolean(receipt)}
-        animationType="slide"
-        onRequestClose={() => setReceipt(null)}
-      >
-        <SafeAreaView style={styles.screen}>
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.content}
-          >
-            {receipt && (
-              <ReceiptForm
-                key={`${receipt.jobId}-${receipt.bounds.start}`}
-                data={data}
-                jobId={receipt.jobId}
-                initialBounds={receipt.bounds}
-                onCancel={() => setReceipt(null)}
-                onSave={(record, markShifts) => {
-                  const error = onRecord(record, markShifts);
-                  if (!error) setReceipt(null);
-                  return error;
-                }}
-              />
-            )}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+      {receipt && (
+        <PayModal
+          title="Received paycheck"
+          busy={busy}
+          onClose={() => setReceipt(null)}
+        >
+          <ReceiptForm
+            key={`${receipt.jobId}-${receipt.bounds.start}`}
+            data={data}
+            jobId={receipt.jobId}
+            currency={currency}
+            initialBounds={receipt.bounds}
+            onSave={async (record, markShifts) => {
+              const error = await onRecord(record, markShifts);
+              if (!error) setReceipt(null);
+              return error;
+            }}
+          />
+        </PayModal>
+      )}
       <Text style={[styles.cardTitle, { marginTop: 20 }]}>
         Received Paychecks
       </Text>
-      {!data.paychecks.length && (
-        <Text style={styles.cardMeta}>No received paychecks recorded yet.</Text>
+      {!receipts.length && (
+        <Text style={styles.cardMeta}>
+          No received paychecks match these dates, job and currency.
+        </Text>
       )}
-      {[...data.paychecks]
+      {[...receipts]
         .sort((a, b) => (b.payDate ?? "").localeCompare(a.payDate ?? ""))
         .map((record) => (
           <View key={record.id} style={styles.card}>
@@ -235,6 +277,7 @@ export function Paychecks({
             )}
             <Action
               title="Undo received paycheck"
+              disabled={busy}
               onPress={() =>
                 Alert.alert(
                   "Undo paycheck?",

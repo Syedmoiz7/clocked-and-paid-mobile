@@ -307,7 +307,12 @@ test("referenced job deletion archives it without deleting shifts, paychecks or 
   const result = reducer(state, actions.removeJob("work"));
   assert.equal(result.jobs[0].archived, true);
   assert.equal(result.selectedJobId, "");
-  assert.deepEqual(result.history, state.history);
+  assert.equal(result.history[0].id, state.history[0].id);
+  assert.equal(result.history[0].startedAt, state.history[0].startedAt);
+  assert.equal(
+    history.wagesFor(result.history[0], result.jobs, result.defaultPlan),
+    history.wagesFor(state.history[0], state.jobs, state.defaultPlan),
+  );
   assert.deepEqual(result.paychecks, state.paychecks);
   assert.deepEqual(result.deductions, state.deductions);
 });

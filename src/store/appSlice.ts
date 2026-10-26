@@ -31,6 +31,14 @@ import { localDate, validDate } from "../utils/dateOnly";
 import { paymentStatus, selectable } from "../features/history/model";
 import { canResume } from "../features/history/summary";
 import {
+  consumptionIds,
+  entryCurrency,
+  receiptError,
+  scopeCurrency,
+  validateDeduction,
+  validateSchedule,
+} from "../features/pay/model";
+import {
   closePauses,
   planChanges,
   withPlanRates,
@@ -41,11 +49,19 @@ import {
   jobReferenced,
   normalizeJob,
   validateJob,
+  jobInProgress,
+  workInProgress,
+  jobPayChanged,
+  preserveJobHistory,
+  jobScheduleChanged,
 } from "../features/jobs/model";
 
 function applyJobDefaults(state: AppState, job: MockJob) {
   state.selectedJobId = job.id;
   state.todayPlan = jobPlan(job, state.defaultPlan);
+  applyJobReminderDefaults(state, job);
+}
+function applyJobReminderDefaults(state: AppState, job: MockJob) {
   {
     const settings = job.reminderSettings ?? state.preferences.defaultReminders;
     state.reminders = {
@@ -689,13 +705,14 @@ const appSlice = createSlice({
         applyToJob?: boolean;
       }>,
     ) => {
+      if (validateSchedule(action.payload.schedule)) return;
       state.paySchedules[action.payload.scope] = action.payload.schedule;
-      if (action.payload.applyToJob) {
+      if (action.payload.applyToJob && !action.payload.schedule.customPeriod) {
         const job = state.jobs.find((job) => job.id === action.payload.scope);
         if (job) {
           const schedule = action.payload.schedule;
           job.payFrequency = schedule.frequency;
-          job.payPeriodStart = schedule.periodStart;
+          job.payPeriodStart = schedule.anchorDate ?? schedule.periodStart;
           job.payPeriodEnd = schedule.periodEnd;
           job.nextPayDate = schedule.payDate;
           job.payDelayDays = schedule.payDelayDays;
@@ -703,11 +720,22 @@ const appSlice = createSlice({
       }
     },
     upsertDeduction: (state, action: PayloadAction<Deduction>) => {
+      if (validateDeduction(action.payload)) return;
       const index = state.deductions.findIndex(
         (item) => item.id === action.payload.id,
       );
       if (index < 0) state.deductions.push(action.payload);
       else state.deductions[index] = action.payload;
+    },
+    upsertDeductionsMany: (state, action: PayloadAction<Deduction[]>) => {
+      if (action.payload.some((item) => validateDeduction(item))) return;
+      action.payload.forEach((item) => {
+        const index = state.deductions.findIndex(
+          (existing) => existing.id === item.id,
+        );
+        if (index < 0) state.deductions.push(item);
+        else state.deductions[index] = item;
+      });
     },
     removeDeduction: (state, action: PayloadAction<string>) => {
       state.deductions = state.deductions.filter(
@@ -723,15 +751,8 @@ const appSlice = createSlice({
       }>,
     ) => {
       const { paycheck, markShifts, consumeDeductionIds } = action.payload;
-      if (
-        state.paychecks.some(
-          (item) =>
-            item.jobId === paycheck.jobId &&
-            item.startDate <= paycheck.endDate &&
-            item.endDate >= paycheck.startDate,
-        )
-      )
-        return;
+      if (receiptError(state, paycheck)) return;
+      const eligibleDeductions = new Set(consumptionIds(state, paycheck));
       state.paychecks.push(paycheck);
       if (markShifts)
         state.history.forEach((shift) => {
@@ -741,6 +762,8 @@ const appSlice = createSlice({
             shift.endedAt &&
             !shift.missingClockIn &&
             shift.jobId === paycheck.jobId &&
+            entryCurrency(shift, state) ===
+              (paycheck.currency ?? scopeCurrency(state, paycheck.jobId)) &&
             shift.date >= paycheck.startDate &&
             shift.date <= paycheck.endDate
           ) {
@@ -754,6 +777,7 @@ const appSlice = createSlice({
           item.enabled &&
           item.frequency === "one-time" &&
           !item.consumedByPaycheckId &&
+          eligibleDeductions.has(item.id) &&
           consumeDeductionIds.includes(item.id)
         )
           item.consumedByPaycheckId = paycheck.id;
@@ -848,14 +872,13 @@ const appSlice = createSlice({
         return;
       const job = normalizeJob(action.payload);
       const existing = state.jobs.find((item) => item.id === job.id);
-      const oldSchedule = existing
-        ? `${existing.payFrequency}:${existing.payPeriodStart}:${existing.nextPayDate}`
-        : "";
+      const previous = existing ? { ...existing } : undefined;
+      const firstProfile = !state.jobs.some((item) => !item.archived);
+      const explicitDefault = job.isDefault && !existing?.isDefault;
+      if (previous && jobPayChanged(state, previous, job))
+        state.history = preserveJobHistory(state, previous);
       // A running shift keeps its current plan; selecting a different job is disabled until clock-out.
-      const makeDefault =
-        !state.jobs.some((item) => !item.archived) ||
-        job.isDefault ||
-        existing?.isDefault;
+      const makeDefault = firstProfile || job.isDefault || existing?.isDefault;
       if (makeDefault)
         state.jobs.forEach((item) => {
           item.isDefault = item.id === job.id;
@@ -863,20 +886,45 @@ const appSlice = createSlice({
       job.isDefault = Boolean(makeDefault);
       if (existing) Object.assign(existing, job);
       else state.jobs.push(job);
-      if (
-        existing &&
-        oldSchedule !==
-          `${job.payFrequency}:${job.payPeriodStart}:${job.nextPayDate}`
-      )
+      if (previous && jobScheduleChanged(previous, job))
         delete state.paySchedules[job.id];
       if (
-        !state.activeShift &&
-        (job.isDefault ||
-          state.selectedJobId === job.id ||
-          !state.selectedJobId)
+        !workInProgress(state) &&
+        (firstProfile || explicitDefault || !state.selectedJobId)
       ) {
         applyJobDefaults(state, job);
+      } else if (
+        !workInProgress(state) &&
+        previous &&
+        state.selectedJobId === job.id
+      ) {
+        const before = jobPlan(previous, state.defaultPlan);
+        const after = jobPlan(job, state.defaultPlan);
+        let changes: Partial<TodayPlan> = {};
+        for (const key of [
+          "hourlyRate",
+          "overtimeThreshold",
+          "overtimeMultiplier",
+          "lunchEnabled",
+          "lunchMinutes",
+        ] as const)
+          if (before[key] !== after[key])
+            changes = { ...changes, [key]: after[key] };
+        state.todayPlan =
+          "lunchEnabled" in changes || "lunchMinutes" in changes
+            ? (planChanges(state.todayPlan, changes, null) ?? {
+                ...state.todayPlan,
+                ...changes,
+              })
+            : { ...state.todayPlan, ...changes };
       }
+      if (
+        previous &&
+        (state.activeShift?.jobId ?? state.selectedJobId) === job.id &&
+        JSON.stringify(previous.reminderSettings) !==
+          JSON.stringify(job.reminderSettings)
+      )
+        applyJobReminderDefaults(state, job);
     },
     acknowledgeJobReminder: (
       state,
@@ -889,7 +937,7 @@ const appSlice = createSlice({
       const job = state.jobs.find(
         (item) => item.id === action.payload && !item.archived,
       );
-      if (!job || state.activeShift) return;
+      if (!job || workInProgress(state)) return;
       state.jobs.forEach((item) => {
         item.isDefault = item.id === job.id;
       });
@@ -898,13 +946,9 @@ const appSlice = createSlice({
     removeJob: (state, action: PayloadAction<string>) => {
       const id = action.payload;
       const job = state.jobs.find((item) => item.id === id);
-      if (
-        !job ||
-        state.activeShift?.jobId === id ||
-        state.extraShifts.some((item) => item.jobId === id)
-      )
-        return;
+      if (!job || jobInProgress(state, id)) return;
       if (jobReferenced(state, id)) {
+        state.history = preserveJobHistory(state, job);
         job.archived = true;
         job.isDefault = false;
       } else state.jobs = state.jobs.filter((item) => item.id !== id);
@@ -915,11 +959,18 @@ const appSlice = createSlice({
       if (state.selectedJobId === id) {
         const next = remaining.find((item) => item.isDefault) ?? remaining[0];
         state.selectedJobId = next?.id ?? "";
-        if (next && !state.activeShift) applyJobDefaults(state, next);
+        if (next && !workInProgress(state)) applyJobDefaults(state, next);
+        else if (!next && !workInProgress(state)) {
+          state.todayPlan = { ...state.defaultPlan };
+          applyJobReminderDefaults(state, {
+            ...job,
+            reminderSettings: state.preferences.defaultReminders,
+          });
+        }
       }
     },
     selectJob: (state, action: PayloadAction<string>) => {
-      if (state.activeShift) return;
+      if (workInProgress(state)) return;
       const job = state.jobs.find(
         (item) => item.id === action.payload && !item.archived,
       );
@@ -1016,6 +1067,7 @@ export const {
 export const {
   savePaySchedule,
   upsertDeduction,
+  upsertDeductionsMany,
   removeDeduction,
   upsertJob,
   setDefaultJob,

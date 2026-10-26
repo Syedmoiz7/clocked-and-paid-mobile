@@ -118,7 +118,7 @@ export function PayTrends({
       ) : (
         <>
           <Bars
-            title="Earnings over time"
+            title="Earnings over time · includes all tips"
             rows={rows}
             kind="earnings"
             data={data}
@@ -186,7 +186,10 @@ export function Progress({
   );
   const scheduled = data.jobs.find(
     (job) =>
-      (!jobId || job.id === jobId) && job.payFrequency && job.payPeriodStart,
+      job.id === jobId &&
+      (job.currency ?? data.preferences.currency) === currency &&
+      job.payFrequency &&
+      job.payPeriodStart,
   );
   const period = scheduled ? payPeriod(localDate(), scheduled) : null;
   const progress = period
@@ -215,7 +218,7 @@ export function Progress({
         <>
           <Text style={styles.cardMeta}>
             {scheduled.name} · {period.start} → {period.end} ·{" "}
-            {Math.round(progress)}%
+            {Math.round(progress)}% of calendar days elapsed
           </Text>
           <View
             accessibilityRole="progressbar"

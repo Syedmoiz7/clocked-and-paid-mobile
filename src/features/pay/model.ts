@@ -11,6 +11,7 @@ import {
   validDate,
   wagesFor,
   workedMinutes,
+  currencies,
 } from "../history/model";
 import { addDays, payPeriod } from "../history/payPeriods";
 
@@ -69,10 +70,10 @@ export function rangeBounds(
   if (range === "allTime")
     return {
       start:
-        history
-          .map((entry) => entry.date)
-          .filter(validDate)
-          .sort()[0] ?? today,
+        [
+          today,
+          ...history.map((entry) => entry.date).filter(validDate),
+        ].sort()[0] ?? today,
       end: today,
     };
   if (range === "thisMonth")
@@ -113,13 +114,58 @@ export function scheduleFor(
 }
 export function validateSchedule(schedule: PaySchedule) {
   if (
+    !frequencies.some((item) => item.value === schedule.frequency) ||
+    !Number.isInteger(schedule.payDelayDays) ||
+    schedule.payDelayDays < 0
+  )
+    return "Choose a valid frequency and a non-negative whole-day pay delay.";
+  if (
     !validBounds({ start: schedule.periodStart, end: schedule.periodEnd }) ||
     !validDate(schedule.payDate)
   )
     return "Choose valid dates with the period end on or after its start.";
   if (schedule.payDate < schedule.periodEnd)
     return "Pay date must be on or after the period end.";
+  if (
+    daysBetween(schedule.periodEnd, schedule.payDate) !== schedule.payDelayDays
+  )
+    return "The pay date and pay delay must agree.";
   return null;
+}
+export function editSchedule(
+  schedule: PaySchedule,
+  field: "frequency" | "periodStart" | "periodEnd" | "payDate",
+  value: string,
+): PaySchedule {
+  if (schedule[field] === value) return schedule;
+  if (field === "frequency")
+    return scheduleFor(
+      value as PayFrequency,
+      schedule.periodStart,
+      schedule.payDelayDays,
+    );
+  if (field === "periodStart")
+    return scheduleFor(schedule.frequency, value, schedule.payDelayDays);
+  if (field === "payDate")
+    return {
+      ...schedule,
+      payDate: value,
+      payDelayDays: daysBetween(schedule.periodEnd, value),
+    };
+  const normal = payPeriod(schedule.periodStart, {
+    id: "edit",
+    name: "",
+    hourlyRate: 0,
+    color: "",
+    payFrequency: schedule.frequency,
+    payPeriodStart: schedule.anchorDate ?? schedule.periodStart,
+  });
+  return {
+    ...schedule,
+    periodEnd: value,
+    payDate: addDays(value, schedule.payDelayDays),
+    customPeriod: value !== normal?.end,
+  };
 }
 export function moveSchedule(
   schedule: PaySchedule,
@@ -168,6 +214,66 @@ export function scopeCurrency(
 ) {
   return data.jobs.find((job) => job.id === jobId)?.currency ?? fallback;
 }
+export function payViewSchedule(
+  data: AppState,
+  jobId: string | null,
+  today = localDate(),
+) {
+  const saved = data.paySchedules[jobId ?? "__fs__"];
+  if (saved) return saved;
+  const job = data.jobs.find((item) => item.id === jobId);
+  const current = job ? payPeriod(today, job) : null;
+  return job?.payFrequency && current
+    ? {
+        ...scheduleFor(job.payFrequency, current.start, job.payDelayDays ?? 7),
+        anchorDate: job.payPeriodStart,
+      }
+    : null;
+}
+export function currentPaySchedule(
+  schedule: PaySchedule,
+  today = localDate(),
+): PaySchedule {
+  const period = schedule.customPeriod
+    ? (() => {
+        const length =
+          daysBetween(schedule.periodStart, schedule.periodEnd) + 1;
+        const start = addDays(
+          schedule.periodStart,
+          Math.floor(daysBetween(schedule.periodStart, today) / length) *
+            length,
+        );
+        return { start, end: addDays(start, length - 1) };
+      })()
+    : payPeriod(today, {
+        id: "view",
+        name: "",
+        hourlyRate: 0,
+        color: "",
+        payFrequency: schedule.frequency,
+        payPeriodStart: schedule.anchorDate ?? schedule.periodStart,
+      })!;
+  return {
+    ...schedule,
+    periodStart: period.start,
+    periodEnd: period.end,
+    payDate: addDays(period.end, schedule.payDelayDays),
+  };
+}
+export function manualDeduction(gross: number, type: string, text: string) {
+  const value = Number(text);
+  const error =
+    !text.trim() ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    (type === "percent" ? value > 100 : value > gross)
+      ? "Enter deductions between 0 and gross pay, or a percentage between 0 and 100."
+      : null;
+  return {
+    error,
+    amount: error ? null : type === "percent" ? (gross * value) / 100 : value,
+  };
+}
 export function entryCurrency(entry: Shift, data: AppState) {
   return entry.currency ?? scopeCurrency(data, entry.jobId ?? null);
 }
@@ -182,6 +288,7 @@ export function periodEntries(
   return data.history.filter(
     (entry) =>
       entry.id !== data.activeShift?.id &&
+      !data.extraShifts.some((shift) => shift.id === entry.id) &&
       entry.date >= bounds.start &&
       entry.date <= bounds.end &&
       (!jobId || entry.jobId === jobId) &&
@@ -220,14 +327,25 @@ export function deductionAmount(
     (item.frequency === "one-time" && item.consumedByPaycheckId)
   )
     return 0;
+  const from = item.applicableFromDate;
+  const to = item.applicableToDate;
+  if (
+    item.frequency === "one-time" &&
+    to &&
+    (to < bounds.start || to > bounds.end)
+  )
+    return 0;
+  if (
+    (from && from > bounds.end) ||
+    (to && to < bounds.start && item.isPercentage)
+  )
+    return 0;
   if (item.isPercentage)
     return (
       ((item.jobId ? (perJobGross.get(item.jobId) ?? 0) : gross) *
         item.amount) /
       100
     );
-  const from = item.applicableFromDate;
-  const to = item.applicableToDate;
   if (from && to)
     return to >= bounds.start && to <= bounds.end ? item.amount : 0;
   const start = from && from > bounds.start ? from : bounds.start;
@@ -240,6 +358,15 @@ export function deductionAmount(
       (daysBetween(start, end) + 1)) /
     365
   );
+}
+export function deductionCurrencyMatches(
+  item: Deduction,
+  data: AppState,
+  currency: string,
+) {
+  return item.jobId
+    ? scopeCurrency(data, item.jobId) === currency
+    : Boolean(item.isPercentage) || data.preferences.currency === currency;
 }
 function median(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
@@ -282,6 +409,12 @@ export function historicalRate(
     rate: median(values),
     count: values.length,
     excluded: rates.length - values.length,
+    recordIds: records
+      .filter((_, index) => values.includes(rates[index]!))
+      .map((record) => record.id),
+    excludedIds: records
+      .filter((_, index) => !values.includes(rates[index]!))
+      .map((record) => record.id),
   };
 }
 export type DeductionEstimate = {
@@ -303,6 +436,9 @@ export function configuredHistoricalRate(
     (item) =>
       item.enabled &&
       !item.consumedByPaycheckId &&
+      !item.isPercentage &&
+      item.frequency !== "one-time" &&
+      deductionCurrencyMatches(item, data, currency) &&
       item.applicableToDate &&
       item.applicableToDate < currentStart &&
       (!item.jobId || !jobId || item.jobId === jobId),
@@ -344,6 +480,7 @@ export function estimateDeductions(
   perJobGross: Map<string | null, number>,
   currency: string,
   preferConfigured = false,
+  now = Date.now(),
 ): DeductionEstimate {
   const gross = [...perJobGross.values()].reduce(
     (sum, value) => sum + value,
@@ -363,22 +500,35 @@ export function estimateDeductions(
     (item) =>
       item.enabled &&
       (!item.jobId || !jobId || item.jobId === jobId) &&
-      (!item.jobId || scopeCurrency(data, item.jobId) === currency),
+      (!item.jobId || perJobGross.has(item.jobId)) &&
+      deductionCurrencyMatches(item, data, currency),
   );
   let total = 0;
   let count = 0;
   let excluded = 0;
+  const samples = new Set<string>();
+  const excludedSamples = new Set<string>();
   let taxSetAside = 0;
   let usedHistory = false;
+  let fallbackTotal = 0;
   const uncovered = new Map<string | null, number>();
   for (const [id, value] of perJobGross) {
     const rate = preferConfigured
       ? null
-      : historicalRate(data.paychecks, id, currency);
+      : historicalRate(
+          data.paychecks.map((record) => ({
+            ...record,
+            currency: record.currency ?? scopeCurrency(data, record.jobId),
+          })),
+          id,
+          currency,
+        );
     if (rate) {
       total += value * rate.rate;
-      count += rate.count;
-      excluded += rate.excluded;
+      rate.recordIds.forEach((id) => samples.add(id));
+      rate.excludedIds.forEach((id) => excludedSamples.add(id));
+      count = samples.size;
+      excluded = excludedSamples.size;
       usedHistory = true;
     } else uncovered.set(id, value);
   }
@@ -387,9 +537,52 @@ export function estimateDeductions(
     0,
   );
   const lineItems = enabled.map((item) => {
-    if (item.jobId && !uncovered.has(item.jobId))
+    if (
+      uncoveredGross <= 0 ||
+      (item.jobId && (uncovered.get(item.jobId) ?? 0) <= 0)
+    )
       return { id: item.id, label: item.label, amount: 0 };
-    const amount = deductionAmount(item, uncoveredGross, uncovered, bounds);
+    let applicable = uncovered;
+    if (
+      item.isPercentage &&
+      (item.applicableFromDate || item.applicableToDate)
+    ) {
+      const known = [
+        ...periodEntries(data, bounds, null, currency),
+        ...[data.activeShift, ...data.extraShifts].filter(
+          (entry): entry is Shift =>
+            Boolean(
+              entry &&
+              entry.date >= bounds.start &&
+              entry.date <= bounds.end &&
+              entryCurrency(entry, data) === currency,
+            ),
+        ),
+      ];
+      applicable = new Map(
+        [...uncovered].map(([id, value]) => {
+          const records = known.filter((entry) => (entry.jobId ?? null) === id);
+          const amount = (entry: Shift) =>
+            shiftAmounts(entry, data, entry.endedAt ? undefined : now).gross;
+          const all = records.reduce((sum, entry) => sum + amount(entry), 0);
+          const scoped = records
+            .filter(
+              (entry) =>
+                (!item.applicableFromDate ||
+                  entry.date >= item.applicableFromDate) &&
+                (!item.applicableToDate || entry.date <= item.applicableToDate),
+            )
+            .reduce((sum, entry) => sum + amount(entry), 0);
+          return [id, all > 0 ? (value * scoped) / all : value];
+        }),
+      );
+    }
+    const amount = deductionAmount(
+      item,
+      [...applicable.values()].reduce((sum, value) => sum + value, 0),
+      applicable,
+      bounds,
+    );
     return { id: item.id, label: item.label, amount };
   });
   const configuredTotal = lineItems.reduce((sum, item) => sum + item.amount, 0);
@@ -409,6 +602,7 @@ export function estimateDeductions(
           item.frequency !== "one-time",
       )
       .forEach((item) => {
+        if (item.isPercentage || item.consumedByPaycheckId) return;
         const key = item.applicableToDate!;
         periods.set(key, (periods.get(key) ?? 0) + item.amount);
       });
@@ -419,7 +613,7 @@ export function estimateDeductions(
     const historicalScope =
       uncovered.size === 1 ? ([...uncovered.keys()][0] ?? null) : jobId;
     const historical = configuredHistoricalRate(
-      data,
+      { ...data, deductions: enabled },
       historicalScope,
       currency,
       bounds.start,
@@ -431,8 +625,10 @@ export function estimateDeductions(
   }
   // Jobs with no applicable deduction rules use the client's explicit temporary 25% fallback.
   for (const [id, value] of uncovered)
-    if (!enabled.some((item) => !item.jobId || item.jobId === id))
+    if (!enabled.some((item) => !item.jobId || item.jobId === id)) {
+      fallbackTotal += value * 0.25;
       total += value * 0.25;
+    }
   const source = usedHistory
     ? "actual-history"
     : enabled.length
@@ -440,17 +636,20 @@ export function estimateDeductions(
       : "fallback";
   return {
     total: Math.min(gross, Math.max(0, total)),
-    taxSetAside: Math.min(gross, taxSetAside),
+    taxSetAside: Math.min(gross, Math.max(0, total), taxSetAside),
     source,
     count,
     excluded,
     lineItems,
     label:
-      source === "actual-history"
+      (source === "actual-history"
         ? `Based on confirmed paycheck history (${count} samples${excluded ? `; ${excluded} outliers excluded` : ""})`
         : source === "configured"
-          ? "Based on saved deduction settings"
-          : "Temporary 25% estimate — no paycheck or deduction data",
+          ? "Based on saved deduction settings (only applicable rules are charged)"
+          : "Temporary 25% estimate — no paycheck or deduction data") +
+      (fallbackTotal > 0 && source !== "fallback"
+        ? "; includes temporary 25% for jobs without deduction data"
+        : ""),
   };
 }
 export function financialSummary(
@@ -463,6 +662,21 @@ export function financialSummary(
   includeLive = true,
 ) {
   const entries = periodEntries(data, bounds, jobId, currency);
+  const running =
+    includeLive && validBounds(bounds)
+      ? [data.activeShift, ...data.extraShifts].filter(
+          (entry): entry is Shift =>
+            Boolean(
+              entry &&
+              entry.date >= bounds.start &&
+              entry.date <= bounds.end &&
+              (!jobId || entry.jobId === jobId) &&
+              entryCurrency(entry, data) === currency,
+            ),
+        )
+      : [];
+  const liveIds = new Set(running.map((entry) => entry.id));
+  const records = [...entries, ...running];
   const perJobGross = new Map<string | null, number>();
   let gross = 0;
   let cashTips = 0;
@@ -479,8 +693,12 @@ export function financialSummary(
       count: number;
     }
   >();
-  entries.forEach((entry) => {
-    const amounts = shiftAmounts(entry, data);
+  records.forEach((entry) => {
+    const amounts = shiftAmounts(
+      entry,
+      data,
+      liveIds.has(entry.id) ? now : undefined,
+    );
     const id = entry.jobId ?? null;
     gross += amounts.gross;
     cashTips += amounts.cashTips;
@@ -497,11 +715,13 @@ export function financialSummary(
       (record) =>
         record.paid &&
         record.jobId === id &&
+        (record.currency ?? scopeCurrency(data, record.jobId)) === currency &&
         entry.entryType !== "project" &&
         entry.date >= record.startDate &&
         entry.date <= record.endDate,
     );
-    if (entry.paid || covered) paid += amounts.gross;
+    if (!liveIds.has(entry.id) && (entry.paid || covered))
+      paid += amounts.gross;
     perJobGross.set(id, (perJobGross.get(id) ?? 0) + amounts.gross);
     const row = rows.get(id) ?? {
       jobId: id,
@@ -516,25 +736,6 @@ export function financialSummary(
     row.count++;
     rows.set(id, row);
   });
-  const active = data.activeShift;
-  const live =
-    includeLive &&
-    active &&
-    validBounds(bounds) &&
-    active.date >= bounds.start &&
-    active.date <= bounds.end &&
-    (!jobId || active.jobId === jobId) &&
-    entryCurrency(active, data) === currency
-      ? shiftAmounts(active, data, now)
-      : null;
-  if (live && active) {
-    gross += live.gross;
-    minutes += live.minutes;
-    perJobGross.set(
-      active.jobId ?? null,
-      (perJobGross.get(active.jobId ?? null) ?? 0) + live.gross,
-    );
-  }
   const estimate = estimateDeductions(
     data,
     bounds,
@@ -542,15 +743,23 @@ export function financialSummary(
     perJobGross,
     currency,
     preferConfigured,
+    now,
   );
   // Confirmed full periods override estimates; a partially selected period keeps the proportional estimate.
   const confirmed = data.paychecks.filter(
     (record) =>
       record.paid &&
       (!jobId || record.jobId === jobId) &&
-      (record.currency ?? "USD") === currency &&
+      (record.currency ?? scopeCurrency(data, record.jobId)) === currency &&
       record.startDate >= bounds.start &&
       record.endDate <= bounds.end &&
+      entries.some(
+        (entry) =>
+          entry.entryType !== "project" &&
+          entry.jobId === record.jobId &&
+          entry.date >= record.startDate &&
+          entry.date <= record.endDate,
+      ) &&
       Number.isFinite(record.totalDeductions),
   );
   const actual = confirmed.reduce(
@@ -574,12 +783,37 @@ export function financialSummary(
     );
   }
   const remainderEstimate = estimateDeductions(
-    data,
+    {
+      ...data,
+      history: data.history.filter(
+        (entry) =>
+          !confirmed.some(
+            (record) =>
+              entry.entryType !== "project" &&
+              entry.jobId === record.jobId &&
+              entryCurrency(entry, data) === currency &&
+              entry.date >= record.startDate &&
+              entry.date <= record.endDate,
+          ),
+      ),
+      deductions: data.deductions.map((item) => {
+        if (item.isPercentage || item.frequency === "one-time") return item;
+        const base = item.jobId ? (perJobGross.get(item.jobId) ?? 0) : gross;
+        const uncovered = item.jobId
+          ? (remaining.get(item.jobId) ?? 0)
+          : [...remaining.values()].reduce((sum, value) => sum + value, 0);
+        return {
+          ...item,
+          amount: item.amount * (base > 0 ? uncovered / base : 0),
+        };
+      }),
+    },
     bounds,
     jobId,
     remaining,
     currency,
     preferConfigured,
+    now,
   );
   const deductionTotal = confirmed.length
     ? Math.min(gross, actual + remainderEstimate.total)
@@ -593,28 +827,36 @@ export function financialSummary(
     minutes,
     overtime,
     daysWorked: new Set(
-      entries
-        .filter((entry) => workedMinutes(entry) > 0)
+      records
+        .filter(
+          (entry) =>
+            workedMinutes(entry, liveIds.has(entry.id) ? now : undefined) > 0,
+        )
         .map((entry) => entry.date),
     ).size,
     rows: [...rows.values()],
     deductions: deductionTotal,
-    taxSetAside: confirmed.length
-      ? remainderEstimate.taxSetAside
-      : estimate.taxSetAside,
+    taxSetAside: Math.min(
+      deductionTotal,
+      confirmed.length ? remainderEstimate.taxSetAside : estimate.taxSetAside,
+    ),
     net: Math.max(
       0,
       gross -
         (deductionTotal -
-          (confirmed.length
-            ? remainderEstimate.taxSetAside
-            : estimate.taxSetAside)),
+          Math.min(
+            deductionTotal,
+            confirmed.length
+              ? remainderEstimate.taxSetAside
+              : estimate.taxSetAside,
+          )),
     ),
     takeHome: Math.max(0, gross - deductionTotal),
     estimate,
     confirmedCount: confirmed.length,
-    live: Boolean(live),
-    count: entries.length + (live ? 1 : 0),
+    live: running.length > 0,
+    liveCount: running.length,
+    count: records.length,
   };
 }
 export function projectedDeductions(
@@ -636,6 +878,7 @@ export function projectedDeductions(
   for (const item of items) {
     if (
       item.frequency === "per-pay-period" &&
+      !item.isPercentage &&
       item.applicableFromDate &&
       item.applicableToDate
     ) {
@@ -699,8 +942,12 @@ export function validateDeduction(item: Deduction) {
     return "One-time deductions need both an applicable start and end date.";
   return null;
 }
-export function paycheckDraft(data: AppState, jobId: string, bounds: Bounds) {
-  const currency = scopeCurrency(data, jobId);
+export function paycheckDraft(
+  data: AppState,
+  jobId: string,
+  bounds: Bounds,
+  currency = scopeCurrency(data, jobId),
+) {
   const entries = periodEntries(data, bounds, jobId, currency, true);
   const gross = entries.reduce(
     (sum, entry) => sum + shiftAmounts(entry, data).gross,
@@ -721,13 +968,17 @@ export function paycheckDraft(data: AppState, jobId: string, bounds: Bounds) {
     estimate,
   };
 }
-export function validateReceipt(record: MockPaycheck) {
+export function validateReceipt(record: MockPaycheck, today?: string) {
+  if (record.currency && !currencies.includes(record.currency))
+    return "Choose a supported currency.";
   if (
     !validBounds({ start: record.startDate, end: record.endDate }) ||
     !record.payDate ||
     !validDate(record.payDate)
   )
     return "Choose a valid period and pay date.";
+  if (today && record.payDate! > today)
+    return "Received on cannot be in the future. Record the paycheck when payment arrives.";
   if (
     ![record.grossPay, record.totalDeductions, record.netPay].every(
       (value) =>
@@ -744,6 +995,30 @@ export function validateReceipt(record: MockPaycheck) {
     return "Net pay must equal gross pay minus deductions.";
   return null;
 }
+export function receiptError(
+  data: AppState,
+  record: MockPaycheck,
+  today = localDate(),
+) {
+  const error = validateReceipt(record, today);
+  if (error) return error;
+  if (!record.paid || !data.jobs.some((job) => job.id === record.jobId))
+    return "Choose an existing job for this received paycheck.";
+  const currency = record.currency ?? scopeCurrency(data, record.jobId);
+  if (
+    data.paychecks.some(
+      (item) =>
+        item.id === record.id ||
+        (item.paid &&
+          item.jobId === record.jobId &&
+          (item.currency ?? scopeCurrency(data, item.jobId)) === currency &&
+          item.startDate <= record.endDate &&
+          item.endDate >= record.startDate),
+    )
+  )
+    return "A received paycheck already covers part of this period in this currency. Choose uncovered dates or undo that receipt first.";
+  return null;
+}
 export function consumptionIds(data: AppState, record: MockPaycheck) {
   const bounds = { start: record.startDate, end: record.endDate };
   return data.deductions
@@ -752,6 +1027,11 @@ export function consumptionIds(data: AppState, record: MockPaycheck) {
         item.enabled &&
         item.frequency === "one-time" &&
         !item.consumedByPaycheckId &&
+        deductionCurrencyMatches(
+          item,
+          data,
+          record.currency ?? scopeCurrency(data, record.jobId),
+        ) &&
         (!item.jobId || item.jobId === record.jobId) &&
         deductionAmount(
           item,

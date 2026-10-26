@@ -537,9 +537,15 @@ export function applyImport(
   }));
   const byJob = new Map<string, MockPaycheck[]>();
   for (const receipt of result.paychecks) {
-    const group = byJob.get(receipt.jobId);
+    if (!receipt.paid) continue;
+    const currency =
+      receipt.currency ??
+      result.jobs.find((job) => job.id === receipt.jobId)?.currency ??
+      result.preferences.currency;
+    const key = `${receipt.jobId}|${currency}`;
+    const group = byJob.get(key);
     if (group) group.push(receipt);
-    else byJob.set(receipt.jobId, [receipt]);
+    else byJob.set(key, [receipt]);
   }
   for (const receipts of byJob.values()) {
     receipts.sort((a, b) => a.startDate.localeCompare(b.startDate));

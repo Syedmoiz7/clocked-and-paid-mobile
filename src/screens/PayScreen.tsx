@@ -11,8 +11,9 @@ import {
   localDate,
   money,
 } from "../features/history/model";
-import { addDays, payPeriod } from "../features/history/payPeriods";
+import { addDays } from "../features/history/payPeriods";
 import { DeductionForm, ScheduleForm } from "../features/pay/Forms";
+import { PayModal } from "../features/pay/PayModal";
 import { Estimator } from "../features/pay/Estimator";
 import { Paychecks } from "../features/pay/Paychecks";
 import { PayTrends, Progress } from "../features/pay/Trends";
@@ -24,6 +25,10 @@ import {
   rangeBounds,
   projectedDeductions,
   scheduleFor,
+  payViewSchedule,
+  moveSchedule,
+  deductionCurrencyMatches,
+  currentPaySchedule,
   validBounds,
   type Bounds,
   type Range,
@@ -32,6 +37,7 @@ import { PaywallCard } from "../components/PaywallCard";
 
 type Props = {
   data: AppState;
+  busy: boolean;
   onPremium: () => void;
   onEndPreview: () => void;
   onPayVisible: (value: boolean) => void;
@@ -39,21 +45,27 @@ type Props = {
     scope: string,
     schedule: PaySchedule,
     applyToJob: boolean,
-  ) => void;
-  onDeduction: (deduction: Deduction) => void;
+  ) => Promise<string | null>;
+  onDeduction: (deduction: Deduction) => Promise<string | null>;
+  onDeductionMany: (deductions: Deduction[]) => Promise<string | null>;
   onDeleteDeduction: (id: string) => void;
-  onReceipt: (record: MockPaycheck, markShifts: boolean) => string | null;
+  onReceipt: (
+    record: MockPaycheck,
+    markShifts: boolean,
+  ) => Promise<string | null>;
   onUndoReceipt: (id: string) => void;
   onMarkPaid: (ids: string[]) => void;
 };
 
 export function PayScreen({
   data,
+  busy,
   onPremium,
   onEndPreview,
   onPayVisible,
   onSchedule,
   onDeduction,
+  onDeductionMany,
   onDeleteDeduction,
   onReceipt,
   onUndoReceipt,
@@ -72,6 +84,7 @@ export function PayScreen({
   const [customStart, setCustomStart] = useState(addDays(localDate(), -29));
   const [customEnd, setCustomEnd] = useState(localDate());
   const [offset, setOffset] = useState(0);
+  const [showCurrent, setShowCurrent] = useState(true);
   const [setupScope, setSetupScope] = useState<string | null>(null);
   const [deductionForm, setDeductionForm] = useState<{
     initial?: Deduction;
@@ -84,17 +97,38 @@ export function PayScreen({
     }
   }, [premium]);
   useEffect(() => {
-    if (!data.activeShift) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const timer = setInterval(
+      () => setNow(Date.now()),
+      data.activeShift || data.extraShifts.length ? 1000 : 30000,
+    );
     return () => clearInterval(timer);
-  }, [data.activeShift]);
+  }, [data.activeShift, data.extraShifts.length]);
   const jobId = scope || null;
-  const job = data.jobs.find((job) => job.id === jobId);
-  const code = job?.currency ?? currency;
+  useEffect(() => {
+    if (scope && !data.jobs.some((job) => job.id === scope)) {
+      setScope("");
+      setOffset(0);
+      setShowCurrent(true);
+      setCurrency(data.preferences.currency);
+    }
+  }, [scope, data.jobs, data.preferences.currency]);
+  const code = currency;
   const availableCurrencies = [
     ...new Set([
       data.preferences.currency,
       ...(data.activeShift?.currency ? [data.activeShift.currency] : []),
+      ...data.extraShifts.map(
+        (entry) =>
+          entry.currency ??
+          data.jobs.find((job) => job.id === entry.jobId)?.currency ??
+          data.preferences.currency,
+      ),
+      ...data.paychecks.map(
+        (record) =>
+          record.currency ??
+          data.jobs.find((job) => job.id === record.jobId)?.currency ??
+          data.preferences.currency,
+      ),
       ...data.jobs.map((item) => item.currency ?? data.preferences.currency),
       ...data.history.map(
         (entry) =>
@@ -104,59 +138,33 @@ export function PayScreen({
       ),
     ]),
   ].filter((value) => currencies.includes(value));
-  const scheduledJob =
-    job?.payFrequency && job.payPeriodStart
-      ? job
-      : !jobId
-        ? data.jobs.find((job) => job.payFrequency && job.payPeriodStart)
-        : undefined;
-  const quick = data.paySchedules[jobId ?? "__fs__"];
-  const periodJob =
-    scheduledJob ??
-    (quick
-      ? {
-          id: "quick",
-          name: "Quick schedule",
-          hourlyRate: 0,
-          color: colors.accent,
-          payFrequency: quick.frequency,
-          payPeriodStart: quick.anchorDate ?? quick.periodStart,
-        }
-      : null);
-  let period = periodJob ? payPeriod(localDate(), periodJob) : null;
-  if (period && periodJob)
-    for (let i = 0; i < Math.abs(offset); i++)
-      period = payPeriod(
-        offset > 0 ? addDays(period.end, 1) : addDays(period.start, -1),
-        periodJob,
-      )!;
-  const rangeWindow = rangeBounds(premium ? range : "last7", data.history);
+  let schedule = payViewSchedule(data, jobId, localDate(new Date(now)));
+  if (schedule && (showCurrent || !premium))
+    schedule = currentPaySchedule(schedule, localDate(new Date(now)));
+  if (schedule)
+    for (let i = 0; i < Math.abs(premium ? offset : 0); i++)
+      schedule = moveSchedule(schedule, offset > 0 ? 1 : -1);
+  const period = schedule
+    ? { start: schedule.periodStart, end: schedule.periodEnd }
+    : null;
   const bounds: Bounds =
     mode === "custom" && premium
       ? { start: customStart, end: customEnd }
       : mode === "preset" && premium
         ? rangeBounds(range, data.history)
-        : (period ?? rangeBounds(premium ? range : "thisMonth", data.history));
+        : (period ??
+          rangeBounds("thisMonth", data.history, localDate(new Date(now))));
   const summary = financialSummary(data, bounds, jobId, code, now);
   const fmt = (value: number) =>
     data.payVisible ? money(value, code) : "•••••";
   const setupJob = data.jobs.find((job) => job.id === setupScope);
   const initialSchedule = setupScope
-    ? (data.paySchedules[setupScope] ??
-      (setupJob?.payFrequency && setupJob.payPeriodStart
-        ? scheduleFor(
-            setupJob.payFrequency,
-            setupJob.payPeriodStart,
-            setupJob.payDelayDays ?? 7,
-          )
-        : scheduleFor("biweekly", localDate())))
+    ? (schedule ?? scheduleFor("biweekly", localDate()))
     : null;
   const visibleDeductions = data.deductions.filter(
     (item) =>
       (!jobId || !item.jobId || item.jobId === jobId) &&
-      (!item.jobId ||
-        (data.jobs.find((job) => job.id === item.jobId)?.currency ??
-          data.preferences.currency) === code),
+      deductionCurrencyMatches(item, data, code),
   );
   const projection = projectedDeductions(
     { ...data, deductions: visibleDeductions },
@@ -175,6 +183,7 @@ export function PayScreen({
   const changeScope = (value: string) => {
     setScope(value);
     setOffset(0);
+    setShowCurrent(true);
     setCurrency(
       data.jobs.find((job) => job.id === value)?.currency ?? currency,
     );
@@ -203,13 +212,6 @@ export function PayScreen({
           onChange={onPayVisible}
         />
         <Choices
-          options={ranges}
-          value={premium ? range : "last7"}
-          onChange={(value) =>
-            premium ? setRange(value as Range) : onPremium()
-          }
-        />
-        <Choices
           options={[
             { value: "", label: "All jobs" },
             ...data.jobs.map((job) => ({ value: job.id, label: job.name })),
@@ -217,9 +219,9 @@ export function PayScreen({
           value={scope}
           onChange={changeScope}
         />
-        {!jobId && availableCurrencies.length > 1 && (
+        {availableCurrencies.length > 1 && (
           <>
-            <Text style={styles.cardMeta}>Display currency</Text>
+            <Text style={styles.cardMeta}>Currency filter</Text>
             <Choices
               options={availableCurrencies.map((value) => ({
                 value,
@@ -253,6 +255,13 @@ export function PayScreen({
               else setMode(value);
             }}
           />
+          {mode === "preset" && premium && (
+            <Choices
+              options={ranges}
+              value={range}
+              onChange={(value) => setRange(value as Range)}
+            />
+          )}
           {mode === "custom" && premium && (
             <>
               <DateField
@@ -291,17 +300,23 @@ export function PayScreen({
               )}
               {!period && (
                 <Text style={styles.cardMeta}>
-                  No pay schedule configured. Showing{" "}
-                  {premium
-                    ? ranges
-                        .find((item) => item.value === range)
-                        ?.label.toLowerCase()
-                    : "this month"}{" "}
-                  until you set one.
+                  No pay schedule for this scope. Showing this month until you
+                  set one. All jobs uses its own summary schedule.
                 </Text>
+              )}
+              {period && (
+                <Action
+                  title="Current period"
+                  disabled={busy || (showCurrent && offset === 0)}
+                  onPress={() => {
+                    setOffset(0);
+                    setShowCurrent(true);
+                  }}
+                />
               )}
               <Action
                 title={period ? "Edit pay schedule" : "Set up pay schedule"}
+                disabled={busy}
                 onPress={() => setSetupScope(jobId ?? "__fs__")}
               />
             </>
@@ -328,15 +343,18 @@ export function PayScreen({
                 {duration(summary.minutes)}
               </Text>
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-                <Metric label="Gross earned" value={fmt(summary.gross)} />
+                <Metric
+                  label="Tracked gross (paycheck tips included)"
+                  value={fmt(summary.gross)}
+                />
                 <Metric label="Net pay" value={fmt(summary.net)} />
                 <Metric label="Deductions" value={fmt(summary.deductions)} />
                 <Metric
-                  label="Cash tips (separate)"
+                  label="Tips paid separately"
                   value={fmt(summary.cashTips)}
                 />
                 <Metric
-                  label="Received gross"
+                  label="Tracked gross marked paid"
                   value={fmt(summary.paid)}
                   color={colors.success}
                 />
@@ -350,8 +368,16 @@ export function PayScreen({
               </View>
               <Text style={styles.cardMeta}>
                 {summary.confirmedCount
-                  ? `Deductions from ${summary.confirmedCount} confirmed paycheck(s)`
+                  ? `Includes ${summary.confirmedCount} confirmed receipt(s); remaining work uses an estimate.`
                   : summary.estimate.label}
+              </Text>
+              <Text style={styles.cardMeta}>
+                Take-home excludes tips paid separately. Receipt amounts can
+                differ from tracked work; actual amounts appear under Received
+                Paychecks.
+                {summary.liveCount
+                  ? ` Includes ${summary.liveCount} running shift(s).`
+                  : ""}
               </Text>
               {summary.taxSetAside > 0 && (
                 <Text style={styles.cardMeta}>
@@ -368,17 +394,26 @@ export function PayScreen({
           )}
         </View>
         {setupScope && initialSchedule && (
-          <ScheduleForm
-            key={setupScope}
-            initial={initialSchedule}
-            jobId={setupJob?.id ?? null}
-            onSave={(schedule, apply) => {
-              onSchedule(setupScope, schedule, apply);
-              setSetupScope(null);
-              setOffset(0);
-            }}
-            onCancel={() => setSetupScope(null)}
-          />
+          <PayModal
+            title="Pay schedule"
+            busy={busy}
+            onClose={() => setSetupScope(null)}
+          >
+            <ScheduleForm
+              key={setupScope}
+              initial={initialSchedule}
+              jobId={setupJob?.id ?? null}
+              onSave={async (schedule, apply) => {
+                const error = await onSchedule(setupScope, schedule, apply);
+                if (!error) {
+                  setSetupScope(null);
+                  setOffset(0);
+                  setShowCurrent(false);
+                }
+                return error;
+              }}
+            />
+          </PayModal>
         )}
 
         <PaySection
@@ -388,6 +423,10 @@ export function PayScreen({
           {premium ? (
             <Paychecks
               data={data}
+              busy={busy}
+              jobId={jobId}
+              currency={code}
+              bounds={bounds}
               onRecord={onReceipt}
               onDelete={onUndoReceipt}
               onMarkPaid={onMarkPaid}
@@ -398,23 +437,19 @@ export function PayScreen({
           )}
         </PaySection>
         <PaySection
-          title={`Progress · ${premium ? ranges.find((item) => item.value === range)?.label : "Last 7 days"}`}
+          title="Progress · selected dates"
+          subtitle="Completed work only · same dates as the summary"
         >
-          <Progress
-            data={data}
-            bounds={rangeWindow}
-            jobId={jobId}
-            currency={code}
-          />
+          <Progress data={data} bounds={bounds} jobId={jobId} currency={code} />
         </PaySection>
         <PaySection
           title="Trends"
-          subtitle="Earnings over time, hours worked & earnings by job"
+          subtitle="Completed work only · earnings, hours & jobs for the selected dates"
         >
           {premium ? (
             <PayTrends
               data={data}
-              bounds={rangeWindow}
+              bounds={bounds}
               jobId={jobId}
               currency={code}
             />
@@ -424,15 +459,19 @@ export function PayScreen({
         </PaySection>
         <PaySection
           title="Estimator & Deductions"
-          subtitle={`${data.deductions.filter((item) => item.enabled).length} active deduction(s)`}
+          subtitle={`${visibleDeductions.filter((item) => item.enabled).length} active deduction(s) in this scope`}
         >
           {premium ? (
             <>
-              <Estimator
-                data={data}
-                currency={code}
-                onSaveSchedule={onSchedule}
-              />
+              {validBounds(bounds) && (
+                <Estimator
+                  key={`${jobId ?? "all"}-${code}-${bounds.start}-${bounds.end}`}
+                  data={data}
+                  currency={code}
+                  jobId={jobId}
+                  bounds={bounds}
+                />
+              )}
               <Text style={[styles.cardTitle, { marginTop: 24 }]}>
                 Taxes & Deductions
               </Text>
@@ -447,21 +486,30 @@ export function PayScreen({
               </Text>
               <Action
                 title="+ Add deduction"
+                disabled={busy}
                 onPress={() => setDeductionForm({})}
               />
               {deductionForm && (
-                <DeductionForm
-                  key={deductionForm.initial?.id ?? "new"}
-                  initial={deductionForm.initial}
-                  data={data}
-                  defaultJobId={jobId}
-                  grossPay={summary.gross}
-                  onCancel={() => setDeductionForm(null)}
-                  onSave={(value) => {
-                    onDeduction(value);
-                    setDeductionForm(null);
-                  }}
-                />
+                <PayModal
+                  title={
+                    deductionForm.initial ? "Edit deduction" : "Add deduction"
+                  }
+                  busy={busy}
+                  onClose={() => setDeductionForm(null)}
+                >
+                  <DeductionForm
+                    key={deductionForm.initial?.id ?? "new"}
+                    initial={deductionForm.initial}
+                    data={data}
+                    defaultJobId={jobId}
+                    referenceBounds={bounds}
+                    onSave={async (value) => {
+                      const error = await onDeduction(value);
+                      if (!error) setDeductionForm(null);
+                      return error;
+                    }}
+                  />
+                </PayModal>
               )}
               {!visibleDeductions.length && (
                 <Text style={styles.cardMeta}>
@@ -469,41 +517,48 @@ export function PayScreen({
                   retirement, or other deductions.
                 </Text>
               )}
-              {!visibleDeductions.length && !jobId && (
-                <Action
-                  title="Add Common Tax Defaults"
-                  onPress={() =>
-                    Alert.alert(
-                      "Add example deductions?",
-                      "These are the client app’s sample amounts. Edit them to match your own payslip; they are not calculated tax rates.",
-                      [
-                        { text: "Cancel", style: "cancel" },
-                        {
-                          text: "Add examples",
-                          onPress: () =>
-                            [
-                              ["Federal Tax", 200],
-                              ["State Tax", 75],
-                              ["Social Security", 85],
-                              ["Medicare", 20],
-                            ].forEach(([label, amount], index) =>
-                              onDeduction({
-                                id: `example-${Date.now()}-${index}`,
-                                label: String(label),
-                                amount: Number(amount),
-                                frequency: "per-pay-period",
-                                enabled: true,
-                                jobId: null,
-                                notes:
-                                  "Example amount — replace with your actual withholding.",
-                              }),
-                            ),
-                        },
-                      ],
-                    )
-                  }
-                />
-              )}
+              {!visibleDeductions.length &&
+                !jobId &&
+                code === data.preferences.currency && (
+                  <Action
+                    title="Add Common Tax Defaults"
+                    disabled={busy}
+                    onPress={() =>
+                      Alert.alert(
+                        "Add example deductions?",
+                        "These are the client app’s sample amounts. Edit them to match your own payslip; they are not calculated tax rates.",
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Add examples",
+                            onPress: () => {
+                              void onDeductionMany(
+                                [
+                                  ["Federal Tax", 200],
+                                  ["State Tax", 75],
+                                  ["Social Security", 85],
+                                  ["Medicare", 20],
+                                ].map(([label, amount], index) => ({
+                                  id: `example-${Date.now()}-${index}`,
+                                  label: String(label),
+                                  amount: Number(amount),
+                                  frequency: "per-pay-period",
+                                  enabled: true,
+                                  jobId: null,
+                                  notes:
+                                    "Example amount — replace with your actual withholding.",
+                                })),
+                              ).then((error) => {
+                                if (error)
+                                  Alert.alert("Could not add examples", error);
+                              });
+                            },
+                          },
+                        ],
+                      )
+                    }
+                  />
+                )}
               {visibleDeductions.map((item) => (
                 <View key={item.id} style={styles.card}>
                   <Text style={styles.cardTitle}>{item.label}</Text>
@@ -534,14 +589,22 @@ export function PayScreen({
                   <Toggle
                     title="Enabled"
                     value={item.enabled}
-                    onChange={(enabled) => onDeduction({ ...item, enabled })}
+                    onChange={(enabled) => {
+                      if (!busy)
+                        void onDeduction({ ...item, enabled }).then((error) => {
+                          if (error)
+                            Alert.alert("Could not update deduction", error);
+                        });
+                    }}
                   />
                   <Action
                     title="Edit deduction"
+                    disabled={busy}
                     onPress={() => setDeductionForm({ initial: item })}
                   />
                   <Action
                     title="Delete deduction"
+                    disabled={busy}
                     onPress={() =>
                       Alert.alert("Delete deduction?", item.label, [
                         { text: "Cancel", style: "cancel" },
@@ -565,7 +628,11 @@ export function PayScreen({
           can change actual take-home pay. This app is not a payroll system.
         </Text>
         {premium && (
-          <Action title="End Premium preview" onPress={onEndPreview} />
+          <Action
+            title="End Premium preview"
+            disabled={busy}
+            onPress={onEndPreview}
+          />
         )}
       </ScrollView>
     </SafeAreaView>

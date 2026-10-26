@@ -1,5 +1,5 @@
 import { Pressable, Text, View } from "react-native";
-import { useThemeTokens } from "../../providers/ThemeProvider";
+import { useThemeTokens } from "../providers/ThemeProvider";
 
 export function PayVisibilityButton({
   visible,

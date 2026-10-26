@@ -1,62 +1,36 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Text, View } from "react-native";
-import type { AppState, PaySchedule } from "../../types";
-import { Action, Choices, Field, Toggle } from "../../components/FormControls";
-import { duration, localDate, money } from "../history/model";
-import { payPeriod } from "../history/payPeriods";
+import type { AppState } from "../../types";
+import { Choices, Field, Toggle } from "../../components/FormControls";
+import { duration, money } from "../history/model";
 import { useThemeTokens } from "../../providers/ThemeProvider";
-import { ErrorText, ScheduleForm } from "./Forms";
+import { ErrorText } from "./Forms";
 import {
   estimateDeductions,
-  moveSchedule,
   periodEntries,
-  scheduleFor,
+  manualDeduction,
   shiftAmounts,
+  type Bounds,
 } from "./model";
 import { Metric } from "./Section";
 
 export function Estimator({
   data,
   currency,
-  onSaveSchedule,
+  jobId,
+  bounds,
 }: {
   data: AppState;
   currency: string;
-  onSaveSchedule: (
-    scope: string,
-    schedule: PaySchedule,
-    applyToJob: boolean,
-  ) => void;
+  jobId: string | null;
+  bounds: Bounds;
 }) {
   const { colors, styles } = useThemeTokens();
-  const [scope, setScope] = useState("__all__");
-  const [editing, setEditing] = useState(false);
   const [preferConfigured, setPreferConfigured] = useState(false);
   const [manual, setManual] = useState(false);
   const [manualType, setManualType] = useState("amount");
   const [manualValue, setManualValue] = useState("");
-  const job = data.jobs.find((job) => job.id === scope);
-  const code = job?.currency ?? currency;
-  const jobId = job?.id ?? null;
-  const schedule =
-    data.paySchedules[scope] ??
-    (job?.payFrequency && job.payPeriodStart
-      ? (() => {
-          const period = payPeriod(localDate(), job)!;
-          return {
-            ...scheduleFor(
-              job.payFrequency!,
-              period.start,
-              job.payDelayDays ?? 7,
-            ),
-            anchorDate: job.payPeriodStart,
-          };
-        })()
-      : scheduleFor("biweekly", localDate()));
-  useEffect(() => {
-    if (!data.paySchedules[scope]) onSaveSchedule(scope, schedule, false);
-  }, [scope]);
-  const bounds = { start: schedule.periodStart, end: schedule.periodEnd };
+  const code = currency;
   const entries = periodEntries(data, bounds, jobId, code, true);
   const perJobGross = new Map<string | null, number>();
   let gross = 0;
@@ -78,83 +52,32 @@ export function Estimator({
     code,
     preferConfigured,
   );
-  const manualNumber = Number(manualValue);
-  const manualError =
-    manual &&
-    (!manualValue.trim() ||
-      !Number.isFinite(manualNumber) ||
-      manualNumber < 0 ||
-      (manualType === "percent" && manualNumber > 100))
-      ? "Enter a valid amount, or a percentage between 0 and 100."
-      : null;
-  const deductions =
-    manual && !manualError
-      ? manualType === "percent"
-        ? (gross * manualNumber) / 100
-        : manualNumber
-      : estimate.total;
+  const override = manualDeduction(gross, manualType, manualValue);
+  const manualError = manual ? override.error : null;
+  const deductions = manual ? override.amount : estimate.total;
   const fmt = (amount: number) =>
     data.payVisible ? money(amount, code) : "•••••";
   return (
     <View>
       <Text style={styles.cardTitle}>Paycheck Estimator</Text>
-      <Choices
-        options={[
-          { value: "__all__", label: "All jobs" },
-          ...data.jobs.map((job) => ({ value: job.id, label: job.name })),
-        ]}
-        value={scope}
-        onChange={(value) => {
-          setScope(value);
-          setEditing(false);
-          setManual(false);
-          setManualValue("");
-        }}
-      />
       <Text style={styles.cardMeta}>
-        {schedule.periodStart} → {schedule.periodEnd} · Pay date{" "}
-        {schedule.payDate} · {code}
+        {bounds.start} → {bounds.end} ·{" "}
+        {data.jobs.find((job) => job.id === jobId)?.name ?? "All jobs"} · {code}
+        . Uses the filters above and completed shifts only.
       </Text>
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        <View style={{ flex: 1 }}>
-          <Action
-            title="← Previous period"
-            onPress={() =>
-              onSaveSchedule(scope, moveSchedule(schedule, -1), false)
-            }
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Action
-            title="Next period →"
-            onPress={() =>
-              onSaveSchedule(scope, moveSchedule(schedule, 1), false)
-            }
-          />
-        </View>
-      </View>
-      <Action
-        title="Edit pay schedule"
-        onPress={() => setEditing((value) => !value)}
-      />
-      {editing && (
-        <ScheduleForm
-          key={scope}
-          initial={schedule}
-          jobId={jobId}
-          onSave={(value, apply) => {
-            onSaveSchedule(scope, value, apply);
-            setEditing(false);
-          }}
-          onCancel={() => setEditing(false)}
-        />
-      )}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
         <Metric label="Gross pay" value={fmt(gross)} />
-        <Metric label="Est. deductions" value={fmt(deductions)} />
+        <Metric
+          label="Est. deductions"
+          value={
+            deductions == null ? "Enter valid deductions" : fmt(deductions)
+          }
+        />
         <Metric
           label="Est. net pay"
-          value={fmt(Math.max(0, gross - deductions))}
+          value={
+            deductions == null ? "—" : fmt(Math.max(0, gross - deductions))
+          }
           accent
         />
         <Metric
@@ -165,7 +88,7 @@ export function Estimator({
       <Text style={styles.cardMeta}>
         {manual ? "Manual deduction override" : estimate.label}
       </Text>
-      {estimate.count > 0 && (
+      {!manual && estimate.count > 0 && (
         <Text style={styles.cardMeta}>
           Confidence:{" "}
           {estimate.count >= 8
@@ -175,17 +98,19 @@ export function Estimator({
               : "Low"}
         </Text>
       )}
-      {gross > 0 && deductions / gross > 0.4 && (
+      {gross > 0 && deductions != null && deductions / gross > 0.4 && (
         <Text style={[styles.cardMeta, { color: colors.warning }]}>
           Deductions exceed 40% of gross. Check your saved settings and paycheck
           history.
         </Text>
       )}
-      <Toggle
-        title="Prefer saved deductions over paycheck history"
-        value={preferConfigured}
-        onChange={setPreferConfigured}
-      />
+      {!manual && (
+        <Toggle
+          title="Prefer saved deductions over paycheck history"
+          value={preferConfigured}
+          onChange={setPreferConfigured}
+        />
+      )}
       <Toggle
         title="Override deductions manually"
         value={manual}
@@ -199,7 +124,11 @@ export function Estimator({
               { value: "percent", label: "Percentage" },
             ]}
             value={manualType}
-            onChange={setManualType}
+            onChange={(value) => {
+              if (value === manualType) return;
+              setManualType(value);
+              setManualValue("");
+            }}
           />
           <Field
             label={

@@ -1,42 +1,54 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { AppState, Deduction, MockJob } from "../types";
 import { useThemeTokens } from "../providers/ThemeProvider";
 import { Action, Toggle } from "../components/FormControls";
 import { JobForm } from "../features/jobs/JobForm";
-import { jobEditError, jobReferenced, newJob } from "../features/jobs/model";
+import {
+  jobBadges,
+  jobInProgress,
+  jobPayDelay,
+  jobReferenced,
+  newJobFromDefaults,
+  nextJobPayDate,
+  workInProgress,
+} from "../features/jobs/model";
 import { DeductionForm } from "../features/pay/Forms";
 import { money } from "../features/history/model";
 import { entitlementsFor } from "../services/entitlements";
+import { FormModal } from "../components/FormModal";
+import { PayVisibilityButton } from "../components/PayVisibilityButton";
 
 type Props = {
   data: AppState;
-  onSave: (job: MockJob) => void;
-  onDefault: (id: string) => void;
-  onDelete: (id: string) => void;
-  onDeduction: (deduction: Deduction) => void;
-  onDeleteDeduction: (id: string) => void;
+  saving: boolean;
+  onSave: (job: MockJob, existing: boolean) => Promise<string | null>;
+  onDefault: (id: string) => Promise<string | null>;
+  onSelect: (id: string) => Promise<string | null>;
+  onDelete: (id: string) => Promise<string | null>;
+  onDeduction: (deduction: Deduction, jobId: string) => Promise<string | null>;
+  onDeleteDeduction: (id: string, jobId: string) => Promise<string | null>;
+  onPayVisibility: () => void;
   onPremium: () => void;
 };
 export function JobsScreen({
   data,
+  saving,
   onSave,
   onDefault,
+  onSelect,
   onDelete,
   onDeduction,
   onDeleteDeduction,
   onPremium,
+  onPayVisibility,
 }: Props) {
   const { colors, styles } = useThemeTokens();
-  const [editing, setEditing] = useState<MockJob | null>(null);
-  const scroll = useRef<ScrollView>(null);
-  useEffect(() => {
-    if (editing)
-      requestAnimationFrame(() =>
-        scroll.current?.scrollTo({ y: 0, animated: true }),
-      );
-  }, [editing?.id]);
+  const [editing, setEditing] = useState<{
+    job: MockJob;
+    existing: boolean;
+  } | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [deduction, setDeduction] = useState<{
     jobId: string;
@@ -46,35 +58,51 @@ export function JobsScreen({
   const jobs = data.jobs.filter((job) => !job.archived);
   const entitlements = entitlementsFor(data);
   const limitReached = jobs.length >= entitlements.jobLimit;
-  const busy = Boolean(data.activeShift);
-  const save = (job: MockJob) => {
-    const error = jobEditError(data, job);
-    if (error) {
-      Alert.alert("Cannot save job", error);
-      return;
-    }
-    onSave(job);
+  const busy = workInProgress(data);
+  const report = (operation: Promise<string | null>, success?: string) => {
+    void operation.then((error) => {
+      if (error) Alert.alert("Jobs unchanged", error);
+      else if (success) setFeedback(success);
+    });
+  };
+  const save = async (job: MockJob) => {
+    const error = await onSave(job, editing?.existing ?? false);
+    if (error) return error;
     setEditing(null);
     setExpanded(job.id);
     setFeedback(
-      "Job saved locally. Tracker defaults, History and Pay use this profile.",
+      "Job saved on this device. Existing work keeps its recorded pay rules.",
     );
+    return null;
   };
   return (
     <SafeAreaView style={styles.screen} edges={["top"]}>
       <ScrollView
-        ref={scroll}
         automaticallyAdjustKeyboardInsets
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.content}
       >
         <Text style={styles.eyebrow}>WORK PROFILES</Text>
-        <Text style={styles.title}>Jobs</Text>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <Text style={[styles.title, { flexGrow: 1 }]}>Jobs</Text>
+          <PayVisibilityButton
+            visible={data.payVisible}
+            onToggle={onPayVisibility}
+          />
+        </View>
         <Text style={styles.subtitle}>
           Manage your jobs, pay rates, schedules, reminders, and deductions.
         </Text>
         <Text style={styles.cardMeta}>
-          Local mock data · no backend required
+          Selected is the profile Tracker will use next. Default is your
+          fallback profile.
         </Text>
         {feedback !== "" && (
           <Text
@@ -87,26 +115,22 @@ export function JobsScreen({
         {!editing && (
           <Action
             title={limitReached ? "+ Add job · Premium" : "+ Add job"}
+            disabled={saving}
             onPress={() => {
               if (limitReached) {
                 onPremium();
                 return;
               }
-              setEditing(
-                newJob(`job-${Date.now()}`, data.defaultPlan.hourlyRate),
-              );
+              setEditing({
+                job: newJobFromDefaults(
+                  data,
+                  `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                ),
+                existing: false,
+              });
               setFeedback("");
               setDeduction(null);
             }}
-          />
-        )}
-        {editing && (
-          <JobForm
-            key={editing.id}
-            initial={editing}
-            busy={busy}
-            onSave={save}
-            onCancel={() => setEditing(null)}
           />
         )}
         {jobs.length === 0 && !editing && (
@@ -150,14 +174,12 @@ export function JobsScreen({
             <Text style={styles.cardMeta}>
               {[
                 job.title,
-                `${money(job.hourlyRate, job.currency ?? "USD")} / hr`,
+                `${data.payVisible ? money(job.hourlyRate, job.currency ?? data.preferences.currency) : "•••••"} / hr`,
               ]
                 .filter(Boolean)
                 .join(" · ")}
             </Text>
-            {(job.isDefault ||
-              (!jobs.some((item) => item.isDefault) &&
-                data.selectedJobId === job.id)) && (
+            {jobBadges(data, job).length > 0 && (
               <Text
                 style={{
                   color: colors.warning,
@@ -165,27 +187,40 @@ export function JobsScreen({
                   marginTop: 6,
                 }}
               >
-                ACTIVE / DEFAULT
+                {jobBadges(data, job).join(" · ")}
               </Text>
             )}
-            {job.id !==
-              (jobs.find((item) => item.isDefault)?.id ??
-                data.selectedJobId) && (
+            {job.id !== data.selectedJobId && (
               <Action
-                title="Set active"
-                disabled={busy}
+                title="Use for Tracker"
+                disabled={busy || saving}
                 onPress={() => {
-                  onDefault(job.id);
-                  setFeedback(`${job.name} is now the active job.`);
+                  report(
+                    onSelect(job.id),
+                    `${job.name} is selected for Tracker. Its defaults are loaded.`,
+                  );
                 }}
+              />
+            )}
+            {!job.isDefault && (
+              <Action
+                title="Make default & select"
+                disabled={busy || saving}
+                onPress={() =>
+                  report(
+                    onDefault(job.id),
+                    `${job.name} is now the default and selected profile.`,
+                  )
+                }
               />
             )}
             <View style={{ flexDirection: "row", gap: 8 }}>
               <View style={{ flex: 1 }}>
                 <Action
                   title="Edit job"
+                  disabled={saving}
                   onPress={() => {
-                    setEditing(job);
+                    setEditing({ job, existing: true });
                     setDeduction(null);
                   }}
                 />
@@ -231,9 +266,10 @@ export function JobsScreen({
                     ? ` · anchored ${job.payPeriodStart}`
                     : ""}
                 </Text>
-                {job.nextPayDate && (
+                {nextJobPayDate(job) && (
                   <Text style={styles.cardMeta}>
-                    Next pay date: {job.nextPayDate}
+                    Next expected pay date: {nextJobPayDate(job)} ·{" "}
+                    {jobPayDelay(job)} days after the period ends
                   </Text>
                 )}
                 <Text style={styles.cardMeta}>
@@ -252,51 +288,42 @@ export function JobsScreen({
                       .map((item) => (
                         <View key={item.id} style={{ marginTop: 10 }}>
                           <Toggle
-                            title={`${item.label} · ${item.amount}${item.isPercentage ? "%" : ` ${job.currency ?? "USD"}`} / ${item.frequency}`}
+                            title={`${item.label} · ${data.payVisible ? `${item.amount}${item.isPercentage ? "%" : ` ${job.currency ?? data.preferences.currency}`}` : "•••••"}${item.isPercentage ? " of matching gross" : ` / ${item.frequency}`}`}
                             value={item.enabled}
+                            disabled={saving}
                             onChange={(enabled) =>
-                              onDeduction({ ...item, enabled })
+                              report(onDeduction({ ...item, enabled }, job.id))
                             }
                           />
                           <Action
                             title={`Edit ${item.label}`}
+                            disabled={saving}
                             onPress={() =>
                               setDeduction({ jobId: job.id, initial: item })
                             }
                           />
                           <Action
                             title={`Delete ${item.label}`}
+                            disabled={saving}
                             onPress={() =>
                               Alert.alert("Delete deduction?", item.label, [
                                 { text: "Cancel", style: "cancel" },
                                 {
                                   text: "Delete",
                                   style: "destructive",
-                                  onPress: () => onDeleteDeduction(item.id),
+                                  onPress: () =>
+                                    report(onDeleteDeduction(item.id, job.id)),
                                 },
                               ])
                             }
                           />
                         </View>
                       ))}
-                    {deduction?.jobId === job.id ? (
-                      <DeductionForm
-                        key={deduction.initial?.id ?? "new"}
-                        initial={deduction.initial}
-                        defaultJobId={job.id}
-                        data={{ ...data, jobs: [job] }}
-                        onSave={(item) => {
-                          onDeduction({ ...item, jobId: job.id });
-                          setDeduction(null);
-                        }}
-                        onCancel={() => setDeduction(null)}
-                      />
-                    ) : (
-                      <Action
-                        title="+ Add job deduction"
-                        onPress={() => setDeduction({ jobId: job.id })}
-                      />
-                    )}
+                    <Action
+                      title="+ Add job deduction"
+                      disabled={saving}
+                      onPress={() => setDeduction({ jobId: job.id })}
+                    />
                   </View>
                 ) : (
                   <View>
@@ -314,11 +341,9 @@ export function JobsScreen({
             )}
             <Action
               title="Delete job"
+              disabled={saving || jobInProgress(data, job.id)}
               onPress={() => {
-                if (
-                  data.activeShift?.jobId === job.id ||
-                  data.extraShifts.some((item) => item.jobId === job.id)
-                ) {
+                if (jobInProgress(data, job.id)) {
                   Alert.alert(
                     "Shift in progress",
                     "Clock out this job before deleting it.",
@@ -336,13 +361,11 @@ export function JobsScreen({
                     {
                       text: "Delete",
                       style: "destructive",
-                      onPress: () => {
-                        onDelete(job.id);
-                        if (editing?.id === job.id) setEditing(null);
-                        setFeedback(
-                          "Job removed from active profiles. Existing records were not deleted.",
-                        );
-                      },
+                      onPress: () =>
+                        report(
+                          onDelete(job.id),
+                          "Job removed from active profiles. Existing work and payments are retained.",
+                        ),
                     },
                   ],
                 );
@@ -357,6 +380,49 @@ export function JobsScreen({
           </Text>
         )}
       </ScrollView>
+      {busy && (
+        <Text
+          style={[styles.cardMeta, { paddingHorizontal: 20, paddingBottom: 8 }]}
+        >
+          Finish or resolve running/recoverable shifts before switching
+          profiles. You can still edit notes and reminders.
+        </Text>
+      )}
+      {editing && (
+        <FormModal
+          title={editing.existing ? "Edit job" : "Add job"}
+          busy={saving}
+          onClose={() => setEditing(null)}
+        >
+          <JobForm
+            key={editing.job.id}
+            initial={editing.job}
+            data={data}
+            busy={saving}
+            onSave={save}
+          />
+        </FormModal>
+      )}
+      {deduction && (
+        <FormModal
+          title="Job deduction"
+          busy={saving}
+          onClose={() => setDeduction(null)}
+        >
+          <DeductionForm
+            key={deduction.initial?.id ?? deduction.jobId}
+            initial={deduction.initial}
+            defaultJobId={deduction.jobId}
+            lockedJobId={deduction.jobId}
+            data={data}
+            onSave={async (item) => {
+              const error = await onDeduction(item, deduction.jobId);
+              if (!error) setDeduction(null);
+              return error;
+            }}
+          />
+        </FormModal>
+      )}
     </SafeAreaView>
   );
 }

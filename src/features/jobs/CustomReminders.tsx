@@ -5,21 +5,31 @@ import { Action, Choices, Field, Toggle } from "../../components/FormControls";
 import { TimePickerField } from "../../components/TimePickerField";
 import { useThemeTokens } from "../../providers/ThemeProvider";
 import { useClockFormat } from "../settings/useClockFormat";
-import { validateReminder } from "./model";
+import { prepareReminderDraft } from "./model";
+import { FormModal } from "../../components/FormModal";
 
 export function CustomReminders({
   value,
   onChange,
+  onEditingChange,
 }: {
   value: CustomReminder[];
   onChange: (value: CustomReminder[]) => void;
+  onEditingChange: (editing: boolean) => void;
 }) {
   const { colors, styles } = useThemeTokens();
   const { timeLabel } = useClockFormat();
   const [editing, setEditing] = useState<CustomReminder | null>(null);
+  const edit = (value: CustomReminder | null) => {
+    setEditing(value);
+    onEditingChange(Boolean(value));
+  };
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Custom Reminders</Text>
+      <Text style={styles.cardMeta}>
+        Changes here are drafts until you save the job.
+      </Text>
       {value.length === 0 && (
         <Text style={styles.cardMeta}>
           No custom reminders yet. Add one below.
@@ -49,10 +59,7 @@ export function CustomReminders({
               : `${item.offsetMinutes}m after ${item.trigger === "after-clock-in" ? "clock-in" : "lunch starts"}`}
             {item.repeatMinutes > 0 ? ` · repeats ${item.repeatMinutes}m` : ""}
           </Text>
-          <Action
-            title={`Edit ${item.name}`}
-            onPress={() => setEditing(item)}
-          />
+          <Action title={`Edit ${item.name}`} onPress={() => edit(item)} />
           <Action
             title={`Delete ${item.name}`}
             onPress={() =>
@@ -63,7 +70,7 @@ export function CustomReminders({
                   style: "destructive",
                   onPress: () => {
                     onChange(value.filter((r) => r.id !== item.id));
-                    if (editing?.id === item.id) setEditing(null);
+                    if (editing?.id === item.id) edit(null);
                   },
                 },
               ])
@@ -71,38 +78,42 @@ export function CustomReminders({
           />
         </View>
       ))}
-      {editing ? (
-        <ReminderEditor
-          key={editing.id}
-          initial={editing}
-          onCancel={() => setEditing(null)}
-          onSave={(item) => {
-            onChange(
-              value.some((r) => r.id === item.id)
-                ? value.map((r) => (r.id === item.id ? item : r))
-                : [...value, item],
-            );
-            setEditing(null);
-          }}
-        />
-      ) : (
-        <Action
-          title="+ Add reminder"
-          onPress={() =>
-            setEditing({
-              id: `reminder-${Date.now()}`,
-              name: "",
-              message: "",
-              enabled: true,
-              trigger: "after-clock-in",
-              offsetMinutes: 60,
-              atTime: "12:00",
-              repeatMinutes: 0,
-              priority: "medium",
-            })
-          }
-        />
+      {editing && (
+        <FormModal
+          title="Reminder draft"
+          busy={false}
+          onClose={() => edit(null)}
+        >
+          <ReminderEditor
+            key={editing.id}
+            initial={editing}
+            onSave={(item) => {
+              onChange(
+                value.some((r) => r.id === item.id)
+                  ? value.map((r) => (r.id === item.id ? item : r))
+                  : [...value, item],
+              );
+              edit(null);
+            }}
+          />
+        </FormModal>
       )}
+      <Action
+        title="+ Add reminder"
+        onPress={() =>
+          edit({
+            id: `reminder-${Date.now()}`,
+            name: "",
+            message: "",
+            enabled: true,
+            trigger: "after-clock-in",
+            offsetMinutes: 60,
+            atTime: "12:00",
+            repeatMinutes: 0,
+            priority: "medium",
+          })
+        }
+      />
     </View>
   );
 }
@@ -110,11 +121,9 @@ export function CustomReminders({
 function ReminderEditor({
   initial,
   onSave,
-  onCancel,
 }: {
   initial: CustomReminder;
   onSave: (value: CustomReminder) => void;
-  onCancel: () => void;
 }) {
   const { colors, styles } = useThemeTokens();
   const [draft, setDraft] = useState(initial);
@@ -196,25 +205,13 @@ function ReminderEditor({
         </Text>
       )}
       <Action
-        title="Save reminder"
+        title="Use reminder in job draft"
         onPress={() => {
-          const reminder = {
-            ...draft,
-            name: draft.name.trim(),
-            offsetMinutes: offset.trim() ? Number(offset) : NaN,
-            repeatMinutes:
-              draft.repeatMinutes > 0
-                ? repeat.trim()
-                  ? Number(repeat)
-                  : NaN
-                : 0,
-          };
-          const error = validateReminder(reminder);
-          if (error) setError(error);
-          else onSave(reminder);
+          const result = prepareReminderDraft(draft, offset, repeat);
+          if (result.error) setError(result.error);
+          else if (result.reminder) onSave(result.reminder);
         }}
       />
-      <Action title="Cancel reminder" onPress={onCancel} />
     </View>
   );
 }

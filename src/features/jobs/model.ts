@@ -4,10 +4,12 @@ import type {
   JobReminderSettings,
   MockJob,
   Shift,
+  Deduction,
 } from "../../types";
-import { validDate } from "../../utils/dateOnly";
+import { localDate, validDate } from "../../utils/dateOnly";
 import { addDays, payPeriod } from "../history/payPeriods";
 import { entitlementsFor } from "../../services/entitlements";
+import { validateDeduction } from "../pay/model";
 
 export const currencies = [
   "USD",
@@ -66,6 +68,43 @@ export function newJob(id: string, rate = 24): MockJob {
     createdAt: new Date().toISOString(),
   };
 }
+export function newJobFromDefaults(data: AppState, id: string): MockJob {
+  return {
+    ...newJob(id, data.defaultPlan.hourlyRate),
+    currency: data.preferences.currency,
+    lunchEnabled: data.defaultPlan.lunchEnabled,
+    lunchMinutes: data.defaultPlan.lunchMinutes,
+    reminderSettings: {
+      ...data.preferences.defaultReminders,
+      custom: data.preferences.defaultReminders.custom.map((item) => ({
+        ...item,
+      })),
+    },
+  };
+}
+export function workInProgress(data: AppState) {
+  return Boolean(
+    data.activeShift || data.extraShifts.length || data.orphanedShift,
+  );
+}
+export function jobInProgress(data: AppState, id: string) {
+  return (
+    data.activeShift?.jobId === id ||
+    data.orphanedShift?.jobId === id ||
+    data.extraShifts.some((shift) => shift.jobId === id)
+  );
+}
+export function jobBadges(data: AppState, job: MockJob) {
+  return [
+    job.isDefault ? "Default" : null,
+    data.selectedJobId === job.id ? "Selected in Tracker" : null,
+    data.activeShift?.jobId === job.id ||
+    data.extraShifts.some((shift) => shift.jobId === job.id)
+      ? "Running"
+      : null,
+    data.orphanedShift?.jobId === job.id ? "Needs recovery" : null,
+  ].filter((label): label is string => Boolean(label));
+}
 export function validateJob(job: MockJob): string | null {
   if (!job.name.trim()) return "Company / job name is required.";
   if (!Number.isFinite(job.hourlyRate) || job.hourlyRate < 0)
@@ -104,6 +143,13 @@ export function validateJob(job: MockJob): string | null {
     return "Choose an anchor start date for the pay schedule.";
   if (job.nextPayDate && !validDate(job.nextPayDate))
     return "Choose a valid next pay date.";
+  if (
+    job.payDelayDays != null &&
+    (!Number.isInteger(job.payDelayDays) ||
+      job.payDelayDays < 0 ||
+      job.payDelayDays > 366)
+  )
+    return "Pay delay must be a whole number from 0 to 366 days.";
   const settings = job.reminderSettings;
   if (!settings) return null;
   if (
@@ -199,6 +245,50 @@ export function normalizeJob(job: MockJob): MockJob {
     archived: false,
   };
 }
+export function prepareReminderDraft(
+  draft: CustomReminder,
+  offset: string,
+  repeat: string,
+):
+  | { reminder: CustomReminder; error: null }
+  | { error: string; reminder?: never } {
+  const offsetValue = offset.trim() ? Number(offset) : NaN;
+  const reminder = {
+    ...draft,
+    name: draft.name.trim(),
+    message: draft.message.trim(),
+    atTime:
+      draft.trigger === "at-time" || validTime(draft.atTime)
+        ? draft.atTime
+        : "12:00",
+    offsetMinutes:
+      draft.trigger === "at-time"
+        ? Number.isInteger(offsetValue) &&
+          offsetValue >= 1 &&
+          offsetValue <= 480
+          ? offsetValue
+          : 60
+        : offsetValue,
+    repeatMinutes:
+      draft.repeatMinutes > 0 ? (repeat.trim() ? Number(repeat) : NaN) : 0,
+  };
+  const error = validateReminder(reminder);
+  return error ? { error } : { reminder, error: null };
+}
+export function jobDeductionError(
+  data: AppState,
+  deduction: Deduction,
+  jobId: string,
+) {
+  if (!entitlementsFor(data).deductionsManager)
+    return "Preview Premium to edit deductions.";
+  if (!data.jobs.some((job) => job.id === jobId && !job.archived))
+    return "This job has been removed. Close the editor and try again.";
+  const existing = data.deductions.find((item) => item.id === deduction.id);
+  if (deduction.jobId !== jobId || (existing && existing.jobId !== jobId))
+    return "A job deduction cannot move to another scope here. Manage other scopes in Pay.";
+  return validateDeduction(deduction);
+}
 
 export function jobPayDelay(job: MockJob) {
   if (job.payDelayDays != null) return job.payDelayDays;
@@ -235,6 +325,146 @@ export function schedulePreview(job: MockJob, today: string) {
     { label: "Next", ...payPeriod(addDays(period.end, 1), job)! },
   ];
 }
+export function nextJobPayDate(job: MockJob, today = localDate()) {
+  const delay = jobPayDelay(job);
+  const period = payPeriod(addDays(today, -delay), job);
+  if (!period) return null;
+  const candidate = addDays(period.end, delay);
+  return candidate >= today
+    ? candidate
+    : addDays(payPeriod(addDays(period.end, 1), job)!.end, delay);
+}
+export function jobScheduleChanged(before: MockJob, after: MockJob) {
+  return (
+    before.payFrequency !== after.payFrequency ||
+    (Boolean(after.payFrequency) &&
+      (before.payPeriodStart !== after.payPeriodStart ||
+        jobPayDelay(before) !== jobPayDelay(after)))
+  );
+}
+export function preserveJobHistory(data: AppState, job: MockJob) {
+  return data.history.map((entry) =>
+    entry.jobId !== job.id
+      ? entry
+      : {
+          ...entry,
+          currency: entry.currency ?? job.currency ?? data.preferences.currency,
+          ...(entry.entryType === "project"
+            ? {}
+            : {
+                customRate: entry.customRate ?? job.hourlyRate,
+                overtimeThreshold:
+                  entry.overtimeThreshold ??
+                  job.overtimeThreshold ??
+                  data.defaultPlan.overtimeThreshold,
+                overtimeMultiplier:
+                  entry.overtimeMultiplier ??
+                  job.overtimeMultiplier ??
+                  data.defaultPlan.overtimeMultiplier,
+              }),
+        },
+  );
+}
+export function jobPayChanged(data: AppState, before: MockJob, after: MockJob) {
+  const previous = jobPlan(before, data.defaultPlan);
+  const next = jobPlan(after, data.defaultPlan);
+  return (
+    previous.hourlyRate !== next.hourlyRate ||
+    previous.overtimeThreshold !== next.overtimeThreshold ||
+    previous.overtimeMultiplier !== next.overtimeMultiplier
+  );
+}
+export type JobNumbers = Record<
+  | "hourlyRate"
+  | "overtimeThreshold"
+  | "overtimeMultiplier"
+  | "lunchMinutes"
+  | "lunchHours"
+  | "repeatMinutes"
+  | "snoozeMinutes"
+  | "payDelayDays",
+  string
+>;
+export function jobDraftNumbers(data: AppState, job: MockJob): JobNumbers {
+  const reminders = job.reminderSettings ?? data.preferences.defaultReminders;
+  return {
+    hourlyRate: String(job.hourlyRate),
+    overtimeThreshold:
+      job.overtimeThreshold == null ? "" : String(job.overtimeThreshold),
+    overtimeMultiplier:
+      job.overtimeMultiplier == null ? "" : String(job.overtimeMultiplier),
+    lunchMinutes: String(job.lunchMinutes ?? data.defaultPlan.lunchMinutes),
+    lunchHours: String(reminders.lunchHours),
+    repeatMinutes: String(reminders.repeatMinutes),
+    snoozeMinutes: String(reminders.snoozeMinutes),
+    payDelayDays: String(jobPayDelay(job)),
+  };
+}
+export function prepareJobDraft(
+  data: AppState,
+  draft: MockJob,
+  numbers: JobNumbers,
+  today = localDate(),
+): { job: MockJob; error: null } | { error: string; job?: never } {
+  const number = (key: keyof JobNumbers) =>
+    numbers[key].trim() ? Number(numbers[key]) : NaN;
+  const source = draft.reminderSettings ?? data.preferences.defaultReminders;
+  const optional = (
+    value: number,
+    minimum: number,
+    maximum: number,
+    fallback: number,
+    whole = false,
+  ) =>
+    Number.isFinite(value) &&
+    (!whole || Number.isInteger(value)) &&
+    value >= minimum &&
+    value <= maximum
+      ? value
+      : fallback;
+  const job: MockJob = {
+    ...draft,
+    hourlyRate: number("hourlyRate"),
+    overtimeThreshold: numbers.overtimeThreshold.trim()
+      ? number("overtimeThreshold")
+      : undefined,
+    overtimeMultiplier: numbers.overtimeMultiplier.trim()
+      ? number("overtimeMultiplier")
+      : undefined,
+    lunchMinutes:
+      draft.lunchEnabled === false
+        ? optional(
+            number("lunchMinutes"),
+            0,
+            120,
+            data.defaultPlan.lunchMinutes,
+            true,
+          )
+        : number("lunchMinutes"),
+    payDelayDays: draft.payFrequency ? number("payDelayDays") : undefined,
+    nextPayDate: undefined,
+    reminderSettings: {
+      ...source,
+      lunchHours:
+        source.lunchMode === "relative"
+          ? number("lunchHours")
+          : optional(number("lunchHours"), 0.5, 12, 5),
+      repeatMinutes: number("repeatMinutes"),
+      snoozeMinutes: source.overlay
+        ? number("snoozeMinutes")
+        : optional(number("snoozeMinutes"), 1, 60, 10, true),
+    },
+  };
+  const error = validateJob(job);
+  if (error) return { error };
+  return {
+    job: normalizeJob({
+      ...job,
+      nextPayDate: nextJobPayDate(job, today) ?? undefined,
+    }),
+    error: null,
+  };
+}
 export function jobReferenced(data: AppState, id: string) {
   return (
     data.history.some((item) => item.jobId === id) ||
@@ -245,24 +475,30 @@ export function jobReferenced(data: AppState, id: string) {
 }
 export function jobEditError(data: AppState, job: MockJob) {
   const existing = data.jobs.find((item) => item.id === job.id);
-  if (data.activeShift && job.isDefault && !existing?.isDefault)
-    return "Clock out before changing the active/default job.";
-  const running =
-    data.activeShift?.jobId === job.id ||
-    data.extraShifts.some((item) => item.jobId === job.id);
+  if (existing?.archived)
+    return "This job has been removed. Close the editor and create a new profile.";
+  if (workInProgress(data) && job.isDefault && !existing?.isDefault)
+    return "Clock out or resolve recoverable shifts before changing the default job.";
+  if (
+    existing &&
+    jobReferenced(data, job.id) &&
+    (existing.currency ?? data.preferences.currency) !==
+      (job.currency ?? data.preferences.currency)
+  )
+    return "This job has saved work, deductions or receipts. Keep its currency and use a separate profile for another currency.";
+  const running = jobInProgress(data, job.id);
   if (
     existing &&
     running &&
-    (
-      [
-        "hourlyRate",
-        "currency",
-        "overtimeThreshold",
-        "overtimeMultiplier",
-      ] as const
-    ).some((key) => existing[key] !== job[key])
+    (jobPayChanged(data, existing, job) ||
+      (existing.currency ?? data.preferences.currency) !==
+        (job.currency ?? data.preferences.currency) ||
+      jobPlan(existing, data.defaultPlan).lunchEnabled !==
+        jobPlan(job, data.defaultPlan).lunchEnabled ||
+      jobPlan(existing, data.defaultPlan).lunchMinutes !==
+        jobPlan(job, data.defaultPlan).lunchMinutes)
   )
-    return "Clock out this job before changing its rate, currency or overtime rules.";
+    return "Clock out or resolve this job’s recoverable shift before changing pay or lunch defaults.";
   if (
     (!existing || existing.archived) &&
     data.jobs.filter((item) => !item.archived).length >=
@@ -294,7 +530,12 @@ export function jobAlerts(shift: Shift, job: MockJob): JobAlert[] {
     const date = new Date(started);
     const [h, m] = value.split(":").map(Number);
     date.setHours(h!, m!, 0, 0);
-    if (date.getTime() < started - 60000) return NaN;
+    if (
+      date.getHours() !== h ||
+      date.getMinutes() !== m ||
+      date.getTime() < started
+    )
+      return NaN;
     return date.getTime();
   };
   const result: JobAlert[] = [];

@@ -34,7 +34,7 @@ import type { DailySummarySource } from "../features/tracker/dailySummary";
 import { Calculator } from "../features/tracker/Calculator";
 import { ManualEditor } from "../features/tracker/ManualEditor";
 import { EditTimesModal } from "../features/tracker/EditTimesModal";
-import { PayVisibilityButton } from "../features/tracker/PayVisibilityButton";
+import { PayVisibilityButton } from "../components/PayVisibilityButton";
 import { CompletedShiftCard } from "../features/tracker/CompletedShiftCard";
 import { RecoveryCard } from "../features/tracker/RecoveryCard";
 import { Action, Field } from "../components/FormControls";

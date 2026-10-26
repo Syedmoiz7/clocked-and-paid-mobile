@@ -40,10 +40,12 @@ export function Toggle({
   title,
   value,
   onChange,
+  disabled = false,
 }: {
   title: string;
   value: boolean;
   onChange: (value: boolean) => void;
+  disabled?: boolean;
 }) {
   const { colors, styles } = useThemeTokens();
   return (
@@ -58,6 +60,7 @@ export function Toggle({
     >
       <Text style={[styles.cardMeta, { flex: 1 }]}>{title}</Text>
       <Switch
+        disabled={disabled}
         accessibilityLabel={title}
         value={value}
         onValueChange={onChange}
@@ -70,6 +73,7 @@ export function Choices({
   options,
   value,
   onChange,
+  disabled = false,
 }: {
   options: {
     value: string;
@@ -77,6 +81,7 @@ export function Choices({
   }[];
   value: string;
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) {
   const { colors, styles } = useThemeTokens();
   return (
@@ -89,8 +94,9 @@ export function Choices({
       {options.map((option) => (
         <Pressable
           key={option.value}
+          disabled={disabled}
           accessibilityRole="button"
-          accessibilityState={{ selected: option.value === value }}
+          accessibilityState={{ selected: option.value === value, disabled }}
           onPress={() => onChange(option.value)}
           style={{
             backgroundColor:
@@ -181,6 +187,7 @@ export function Field({
   secure = false,
   keyboardType,
   autoCapitalize,
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -190,12 +197,15 @@ export function Field({
   secure?: boolean;
   keyboardType?: import("react-native").TextInputProps["keyboardType"];
   autoCapitalize?: import("react-native").TextInputProps["autoCapitalize"];
+  disabled?: boolean;
 }) {
   const { colors, styles } = useThemeTokens();
   return (
     <View style={{ marginTop: 10 }}>
       <Text style={styles.cardMeta}>{label}</Text>
       <TextInput
+        editable={!disabled}
+        accessibilityState={{ disabled }}
         accessibilityLabel={label}
         value={value}
         onChangeText={onChange}
