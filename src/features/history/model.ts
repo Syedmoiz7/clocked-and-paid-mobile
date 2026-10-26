@@ -107,7 +107,10 @@ export function draftForEntry(shift: Shift): EntryDraft {
     currency: shift.currency ?? "USD",
     jobId: shift.jobId ?? null,
     notes: shift.projectNotes ?? "",
-    paid: shift.paid ?? false,
+    paid:
+      shift.entryType === "project" || (!shift.missingClockIn && shift.endedAt)
+        ? (shift.paid ?? false)
+        : false,
     tips: String(shift.tips ?? 0),
     tipType: shift.tipType ?? "cash",
     customRate: shift.customRate == null ? "" : String(shift.customRate),
@@ -171,7 +174,13 @@ export function wagesFor(
 }
 function atTime(date: string, time: string) {
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
-  return new Date(`${date}T${time}:00`);
+  const value = new Date(`${date}T${time}:00`);
+  return timeValue(value.toISOString()) === time ? value : null;
+}
+function nextDay(value: Date) {
+  const next = new Date(value);
+  next.setDate(next.getDate() + 1);
+  return next;
 }
 export function prepareEntry(
   draft: EntryDraft,
@@ -239,7 +248,11 @@ export function prepareEntry(
   }
   if (!draft.start && !draft.end)
     return fail("Enter at least a Clock In or Clock Out time.");
-  if (existing && (!draft.start || !draft.end))
+  if (
+    existing?.endedAt &&
+    !existing.missingClockIn &&
+    (!draft.start || !draft.end)
+  )
     return fail(
       "Enter both Clock In and actual Clock Out to complete the correction.",
     );
@@ -256,11 +269,22 @@ export function prepareEntry(
     (draft.customRate !== "" && !amount(draft.customRate))
   )
     return fail("Amounts and durations must be valid non-negative numbers.");
-  const start = atTime(draft.date, draft.start);
-  let end = atTime(draft.date, draft.end);
-  if (start && end && end < start) end = new Date(end.getTime() + 86400000);
-  let lunchStart = atTime(draft.date, draft.lunchStart);
-  let lunchEnd = atTime(draft.date, draft.lunchEnd);
+  const clockTime = (time: string, recorded?: string | null) =>
+    existing?.date === draft.date &&
+    time &&
+    recorded &&
+    time === timeValue(recorded)
+      ? new Date(recorded)
+      : atTime(draft.date, time);
+  const start = clockTime(draft.start, existing?.startedAt);
+  let end = clockTime(draft.end, existing?.endedAt);
+  if (start && end && end < start) end = nextDay(end);
+  if (start && end && end.getTime() === start.getTime())
+    return fail("Clock Out must be different from Clock In.");
+  if (draft.paid && (!start || !end))
+    return fail("Complete both clock times before marking a shift paid.");
+  let lunchStart = clockTime(draft.lunchStart, existing?.historyLunchStart);
+  let lunchEnd = clockTime(draft.lunchEnd, existing?.historyLunchEnd);
   if (
     start &&
     lunchStart &&
@@ -268,15 +292,31 @@ export function prepareEntry(
     end &&
     localDate(end) !== draft.date
   )
-    lunchStart = new Date(lunchStart.getTime() + 86400000);
+    lunchStart = nextDay(lunchStart);
+  if (
+    start &&
+    lunchEnd &&
+    lunchEnd < start &&
+    end &&
+    localDate(end) !== draft.date
+  )
+    lunchEnd = nextDay(lunchEnd);
   if (lunchStart && lunchEnd && lunchEnd < lunchStart)
-    lunchEnd = new Date(lunchEnd.getTime() + 86400000);
+    lunchEnd = nextDay(lunchEnd);
+  if (
+    (end && timeValue(end.toISOString()) !== draft.end) ||
+    (lunchStart && timeValue(lunchStart.toISOString()) !== draft.lunchStart) ||
+    (lunchEnd && timeValue(lunchEnd.toISOString()) !== draft.lunchEnd)
+  )
+    return fail(
+      "A selected time does not exist on that date because the clocks change. Choose another time.",
+    );
   if (
     lunchStart &&
     lunchEnd &&
     (lunchEnd <= lunchStart ||
-      (start && lunchStart <= start) ||
-      (end && lunchEnd >= end))
+      (start && lunchStart < start) ||
+      (end && lunchEnd > end))
   )
     return fail("Lunch must fall within the shift, with End after Start.");
   const lunchMinutes =
@@ -284,6 +324,40 @@ export function prepareEntry(
       ? (lunchEnd.getTime() - lunchStart.getTime()) / 60000
       : Number(draft.lunchMinutes);
   const breakMinutes = Number(draft.breakMinutes);
+  if (draft.breaks.length && start && end) {
+    const intervals = draft.breaks
+      .map((item) => ({
+        start: Date.parse(item.start),
+        end: item.end ? Date.parse(item.end) : NaN,
+      }))
+      .sort((a, b) => a.start - b.start);
+    if (
+      intervals.some(
+        (item, index) =>
+          !Number.isFinite(item.start) ||
+          !Number.isFinite(item.end) ||
+          item.end <= item.start ||
+          item.start < start.getTime() ||
+          item.end > end.getTime() ||
+          (index > 0 && item.start < intervals[index - 1]!.end) ||
+          (lunchStart &&
+            lunchEnd &&
+            item.start < lunchEnd.getTime() &&
+            item.end > lunchStart.getTime()),
+      )
+    )
+      return fail(
+        "Recorded breaks must be within the shift and cannot overlap each other or lunch. Replace them with total minutes to correct the record.",
+      );
+    const recorded = intervals.reduce(
+      (sum, item) => sum + (item.end - item.start) / 60000,
+      0,
+    );
+    if (Math.abs(recorded - breakMinutes) > 0.02)
+      return fail(
+        "Break minutes differ from the recorded breaks. Use the recorded total or replace the records with total minutes.",
+      );
+  }
   if (
     start &&
     end &&
@@ -310,6 +384,12 @@ export function prepareEntry(
     customRate: draft.customRate === "" ? null : Number(draft.customRate),
     earnings: 0,
   };
+  if (existing?.jobId !== draft.jobId) {
+    const job = jobs.find((job) => job.id === draft.jobId);
+    entry.overtimeThreshold = job?.overtimeThreshold ?? plan.overtimeThreshold;
+    entry.overtimeMultiplier =
+      job?.overtimeMultiplier ?? plan.overtimeMultiplier;
+  }
   entry.earnings = wagesFor(entry, jobs, plan);
   return { ok: true, entry };
 }
@@ -425,12 +505,19 @@ export function paymentStatus(
   paychecks: MockPaycheck[],
   jobs: MockJob[],
 ) {
+  if (entry.entryType !== "project" && (entry.missingClockIn || !entry.endedAt))
+    return "Incomplete";
   if (
     entry.entryType !== "project" &&
     paychecks.some(
       (paycheck) =>
         paycheck.paid &&
         paycheck.jobId === entry.jobId &&
+        (!paycheck.currency ||
+          paycheck.currency ===
+            (entry.currency ??
+              jobs.find((job) => job.id === entry.jobId)?.currency ??
+              "USD")) &&
         entry.date >= paycheck.startDate &&
         entry.date <= paycheck.endDate,
     )
@@ -451,6 +538,8 @@ export function selectable(
 ) {
   return (
     entry.entryType !== "project" &&
+    !entry.missingClockIn &&
+    Boolean(entry.endedAt) &&
     !entry.paid &&
     paymentStatus(entry, paychecks, jobs) !== "Paid via Paycheck"
   );
@@ -468,6 +557,7 @@ export function csvFor(
   jobs: MockJob[],
   plan: TodayPlan,
   defaultCurrency = "USD",
+  paychecks: MockPaycheck[] = [],
 ) {
   const cell = (value: unknown) => {
     const text = String(value ?? "");
@@ -493,7 +583,7 @@ export function csvFor(
         workedMinutes(entry),
         wagesFor(entry, jobs, plan).toFixed(2),
         entry.tips ?? 0,
-        entry.paid ? "yes" : "no",
+        paymentStatus(entry, paychecks, jobs).startsWith("Paid") ? "yes" : "no",
         entry.projectNotes,
         entry.id,
         entry.jobId,

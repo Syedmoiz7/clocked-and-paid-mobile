@@ -28,6 +28,8 @@ import {
 } from "../features/settings/model";
 import { applyImport, type ImportData } from "../features/settings/backup";
 import { localDate, validDate } from "../utils/dateOnly";
+import { paymentStatus, selectable } from "../features/history/model";
+import { canResume } from "../features/history/summary";
 import {
   closePauses,
   planChanges,
@@ -531,7 +533,13 @@ const appSlice = createSlice({
     },
     toggleHistoryPaid: (state, action: PayloadAction<string>) => {
       const shift = state.history.find((item) => item.id === action.payload);
-      if (shift) {
+      if (
+        shift &&
+        paymentStatus(shift, state.paychecks, state.jobs) !==
+          "Paid via Paycheck" &&
+        (shift.entryType === "project" ||
+          (!shift.missingClockIn && shift.endedAt))
+      ) {
         shift.paid = !shift.paid;
         shift.paidAt = shift.paid ? new Date().toISOString() : null;
         shift.paidByPaycheckId = null;
@@ -540,18 +548,9 @@ const appSlice = createSlice({
     markHistoryPaidMany: (state, action: PayloadAction<string[]>) => {
       const ids = new Set(action.payload);
       state.history.forEach((shift) => {
-        const paycheck = state.paychecks.some(
-          (paycheck) =>
-            paycheck.paid &&
-            paycheck.jobId === shift.jobId &&
-            shift.date >= paycheck.startDate &&
-            shift.date <= paycheck.endDate,
-        );
         if (
           ids.has(shift.id) &&
-          !shift.paid &&
-          shift.entryType !== "project" &&
-          !paycheck
+          selectable(shift, state.paychecks, state.jobs)
         ) {
           shift.paid = true;
           shift.paidAt = new Date().toISOString();
@@ -787,14 +786,23 @@ const appSlice = createSlice({
     },
     reactivateHistoryShift: (state, action: PayloadAction<string>) => {
       const shift = state.history.find((shift) => shift.id === action.payload);
-      if (
-        state.activeShift ||
-        !shift ||
-        shift.entryType === "project" ||
-        shift.missingClockIn ||
-        shift.endedAt
-      )
-        return;
+      if (!shift || !canResume(shift, state)) return;
+      const job = state.jobs.find((job) => job.id === shift.jobId);
+      if (job && !job.archived) applyJobDefaults(state, job);
+      else state.todayPlan = { ...state.defaultPlan };
+      state.todayPlan = {
+        ...state.todayPlan,
+        hourlyRate:
+          shift.customRate ?? job?.hourlyRate ?? state.defaultPlan.hourlyRate,
+        overtimeThreshold:
+          shift.overtimeThreshold ??
+          job?.overtimeThreshold ??
+          state.defaultPlan.overtimeThreshold,
+        overtimeMultiplier:
+          shift.overtimeMultiplier ??
+          job?.overtimeMultiplier ??
+          state.defaultPlan.overtimeMultiplier,
+      };
       state.activeShift = { ...shift };
       state.history = state.history.filter((item) => item.id !== shift.id);
     },

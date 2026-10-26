@@ -7,10 +7,11 @@ import {
   duration,
   localDate,
   money,
-  periodDeductions,
   wagesFor,
   workedMinutes,
+  validDate,
 } from "./model";
+import { entryCurrency, historySummary } from "./summary";
 import { addDays, payPeriod } from "./payPeriods";
 type Mode =
   "daily" | "weekly" | "monthly" | "yearly" | "payperiods" | "summary";
@@ -40,21 +41,22 @@ export function CalendarView({
   const [to, setTo] = useState(localDate());
   const history = data.history.filter(
     (entry) =>
-      entry.id !== data.activeShift?.id && (!jobId || entry.jobId === jobId),
+      entry.id !== data.activeShift?.id &&
+      !data.extraShifts.some((shift) => shift.id === entry.id) &&
+      (!jobId || entry.jobId === jobId),
   );
   const currency =
     data.jobs.find((job) => job.id === jobId)?.currency ??
     data.preferences.currency;
-  const amount = (value: number) =>
-    data.payVisible ? money(value, currency) : "•••••";
+  const amount = (value: number, code = currency) =>
+    data.payVisible ? money(value, code) : "•••••";
   const summary = (entries: Shift[]) => {
-    const gross = entries.reduce(
-      (sum, entry) =>
-        sum +
-        wagesFor(entry, data.jobs, data.defaultPlan) +
-        (entry.entryType === "project" ? 0 : (entry.tips ?? 0)),
-      0,
-    );
+    const gross =
+      historySummary(entries, data)
+        .map(
+          (total) => `${total.currency} ${amount(total.gross, total.currency)}`,
+        )
+        .join(" · ") || "No earnings";
     const minutes = entries.reduce(
       (sum, entry) => sum + workedMinutes(entry),
       0,
@@ -75,7 +77,7 @@ export function CalendarView({
     entries.map((entry) => (
       <Action
         key={entry.id}
-        title={`${entry.date} · ${entry.entryType === "project" ? entry.projectName : duration(workedMinutes(entry))} · ${amount(wagesFor(entry, data.jobs, data.defaultPlan))} — Edit`}
+        title={`${entry.date} · ${entry.entryType === "project" ? entry.projectName : duration(workedMinutes(entry))} · ${amount(wagesFor(entry, data.jobs, data.defaultPlan) + (entry.entryType === "project" ? 0 : (entry.tips ?? 0)), entryCurrency(entry, data))} — Edit`}
         onPress={() => onEdit(entry)}
       />
     ));
@@ -90,7 +92,7 @@ export function CalendarView({
         <Text
           style={[styles.cardTitle, { color: colors.accent, marginTop: 10 }]}
         >
-          {amount(totals.gross)}
+          {totals.gross}
         </Text>
         <Text style={styles.cardMeta}>
           {duration(totals.minutes)} · {totals.days} days worked ·{" "}
@@ -116,8 +118,7 @@ export function CalendarView({
   const scheduledJobs = data.jobs.filter(
     (job) => job.payFrequency && job.payPeriodStart,
   );
-  const selectedJob =
-    scheduledJobs.find((job) => job.id === jobId) ?? scheduledJobs[0];
+  const selectedJob = scheduledJobs.find((job) => job.id === jobId);
   const periods = new Map<
     string,
     {
@@ -136,6 +137,10 @@ export function CalendarView({
   return (
     <View>
       <Text style={[styles.cardTitle, { marginTop: 20 }]}>Pay Calendar</Text>
+      <Text style={styles.cardMeta}>
+        Saved entries only. Gross includes tips; running shifts are shown in
+        Tracker and the History list.
+      </Text>
       <Choices
         options={modes.map((value) => ({
           value,
@@ -150,6 +155,11 @@ export function CalendarView({
           setExpanded(null);
         }}
       />
+      {mode === "payperiods" && !jobId && (
+        <Text style={styles.cardMeta}>
+          Choose a job above to see its pay periods.
+        </Text>
+      )}
       <Choices
         options={[
           { value: "", label: "All jobs" },
@@ -290,7 +300,7 @@ export function CalendarView({
                         {new Date(value, index, 1).toLocaleDateString([], {
                           month: "short",
                         })}{" "}
-                        · {amount(totals.gross)} · {duration(totals.minutes)} ·{" "}
+                        · {totals.gross} · {duration(totals.minutes)} ·{" "}
                         {totals.days} days
                       </Text>
                     );
@@ -321,7 +331,9 @@ export function CalendarView({
           </>
         ) : (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>No pay schedule configured</Text>
+            <Text style={styles.cardTitle}>
+              {jobId ? "No pay schedule for this job" : "Choose a job"}
+            </Text>
             <Text style={styles.cardMeta}>
               Set a job’s pay frequency and anchor date in Jobs to see its pay
               periods.
@@ -332,7 +344,7 @@ export function CalendarView({
         <>
           <DateField label="From" value={from} onChange={setFrom} />
           <DateField label="To" value={to} onChange={setTo} />
-          {from > to ? (
+          {!validDate(from) || !validDate(to) || from > to ? (
             <Text style={[styles.cardMeta, { color: colors.warning }]}>
               Select a valid date range.
             </Text>
@@ -341,26 +353,16 @@ export function CalendarView({
               {group("summary", `${from} → ${to}`, inRange(from, to))}
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Earnings breakdown</Text>
+                {historySummary(inRange(from, to), data).map((total) => (
+                  <Text key={total.currency} style={styles.cardMeta}>
+                    {total.currency} · Estimated deductions{" "}
+                    {amount(total.deductions, total.currency)} · Estimated net{" "}
+                    {amount(total.net, total.currency)}
+                  </Text>
+                ))}
                 <Text style={styles.cardMeta}>
-                  Deductions:{" "}
-                  {amount(
-                    periodDeductions(
-                      data.deductions,
-                      inRange(from, to),
-                      jobId || null,
-                    ),
-                  )}
-                </Text>
-                <Text style={styles.cardMeta}>
-                  Net:{" "}
-                  {amount(
-                    summary(inRange(from, to)).gross -
-                      periodDeductions(
-                        data.deductions,
-                        inRange(from, to),
-                        jobId || null,
-                      ),
-                  )}
+                  Saved deductions are prorated by date as in Pay. Actual
+                  take-home is recorded in Pay.
                 </Text>
               </View>
               {[

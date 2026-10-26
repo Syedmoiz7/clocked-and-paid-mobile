@@ -1,5 +1,5 @@
 import { entitlementsFor } from "../services/entitlements";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { AppState, Shift } from "../types";
@@ -9,10 +9,16 @@ import {
   Action,
   Choices,
   DateField,
-  EntryForm,
   Toggle,
 } from "../features/history/EntryForm";
 import { CalendarView } from "../features/history/CalendarView";
+import { EntryModal } from "../features/history/EntryModal";
+import {
+  canResume,
+  entryCurrency,
+  historySummary,
+  visibleHistory,
+} from "../features/history/summary";
 import { PaywallCard } from "../components/PaywallCard";
 import {
   blankDraft,
@@ -20,11 +26,9 @@ import {
   draftForEntry,
   duration,
   entitledEntries,
-  filterEntries,
   localDate,
   money,
   paymentStatus,
-  periodDeductions,
   selectable,
   validDate,
   wagesFor,
@@ -34,14 +38,14 @@ import {
 } from "../features/history/model";
 type Props = {
   data: AppState;
-  onSave: (draft: EntryDraft, id?: string) => string | null;
+  busy: boolean;
+  onSave: (draft: EntryDraft, id?: string) => Promise<string | null>;
   onDelete: (id: string) => void;
   onPaid: (id: string) => void;
-  onBulkPaid: (ids: string[]) => void;
+  onBulkPaid: (ids: string[]) => Promise<boolean>;
   onExport: (entries: Shift[]) => void;
   onPayVisibility: (visible: boolean) => void;
   onOpenTracker: () => void;
-  onDiscard: () => void;
   onReactivate: (id: string) => void;
   onPremium: () => void;
   onEndPreview: () => void;
@@ -56,6 +60,7 @@ const periodOptions = [
 ];
 export function HistoryScreen({
   data,
+  busy,
   onSave,
   onDelete,
   onPaid,
@@ -63,7 +68,6 @@ export function HistoryScreen({
   onExport,
   onPayVisibility,
   onOpenTracker,
-  onDiscard,
   onReactivate,
   onPremium,
   onEndPreview,
@@ -76,7 +80,6 @@ export function HistoryScreen({
     activeShift,
     jobs,
     paychecks,
-    deductions,
     defaultPlan: plan,
     payVisible,
   } = data;
@@ -92,43 +95,22 @@ export function HistoryScreen({
   const [selected, setSelected] = useState<string[]>([]);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    if (!activeShift) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const timer = setInterval(
+      () => setNow(Date.now()),
+      activeShift || data.extraShifts.length ? 1000 : 30000,
+    );
     return () => clearInterval(timer);
-  }, [activeShift]);
-  const update = (changes: Partial<HistoryFilters>) =>
+  }, [activeShift, data.extraShifts.length]);
+  const update = (changes: Partial<HistoryFilters>) => {
+    setSelected([]);
     setFilters((current) => ({ ...current, ...changes }));
-  const filtered = useMemo(
-    () => filterEntries(history, filters, activeShift?.id),
-    [history, filters, activeShift?.id],
-  );
-  const entries = entitledEntries(filtered, premium);
+  };
+  const { entries, live } = visibleHistory(data, filters, premium, now);
+  const totals = historySummary(entries, data, live, now);
   const eligible = entries
     .filter((entry) => selectable(entry, paychecks, jobs))
     .map((entry) => entry.id);
   const selectedEligible = selected.filter((id) => eligible.includes(id));
-  const liveMinutes = activeShift ? workedMinutes(activeShift, now) : 0;
-  const livePay = activeShift
-    ? wagesFor(activeShift, jobs, data.todayPlan, now)
-    : 0;
-  const minutes =
-    entries.reduce((sum, entry) => sum + workedMinutes(entry), 0) + liveMinutes;
-  const wages =
-    entries.reduce((sum, entry) => sum + wagesFor(entry, jobs, plan), 0) +
-    livePay;
-  const tips = entries.reduce(
-    (sum, entry) =>
-      sum + (entry.entryType === "project" ? 0 : (entry.tips ?? 0)),
-    0,
-  );
-  const deductionsTotal = periodDeductions(deductions, entries, filters.jobId);
-  const gross = wages + (filters.excludeTips ? 0 : tips);
-  const total =
-    filters.earnings === "tips"
-      ? tips
-      : filters.earnings === "net"
-        ? gross - (filters.excludeDeductions ? 0 : deductionsTotal)
-        : gross;
   const currency =
     jobs.find((job) => job.id === filters.jobId)?.currency ??
     data.preferences.currency;
@@ -142,7 +124,10 @@ export function HistoryScreen({
     filters.excludeTips,
     filters.excludeDeductions,
   ].filter(Boolean).length;
-  const clearFilters = () => setFilters(defaultFilters());
+  const clearFilters = () => {
+    setFilters(defaultFilters());
+    setSelected([]);
+  };
   const toggleSelected = (id: string) =>
     setSelected((current) =>
       current.includes(id)
@@ -158,9 +143,12 @@ export function HistoryScreen({
         {
           text: "Confirm",
           onPress: () => {
-            onBulkPaid(selectedEligible);
-            setSelected([]);
-            setSelectionMode(false);
+            void onBulkPaid(selectedEligible).then((saved) => {
+              if (saved) {
+                setSelected([]);
+                setSelectionMode(false);
+              }
+            });
           },
         },
       ],
@@ -169,7 +157,7 @@ export function HistoryScreen({
     filters.earnings === "tips"
       ? "Total Tips"
       : filters.earnings === "net" && !filters.excludeDeductions
-        ? "Net Earnings"
+        ? "Estimated Net"
         : filters.excludeTips
           ? "Wages Only"
           : "Total Earned";
@@ -181,10 +169,18 @@ export function HistoryScreen({
       >
         <Text style={styles.title}>Work History</Text>
         <Text style={styles.subtitle}>
-          {history.filter((entry) => entry.entryType !== "project").length}{" "}
+          {
+            entitledEntries(history, premium).filter(
+              (entry) => entry.entryType !== "project",
+            ).length
+          }{" "}
           shifts ·{" "}
-          {history.filter((entry) => entry.entryType === "project").length}{" "}
-          projects{activeShift ? " · 1 active" : ""}
+          {
+            entitledEntries(history, premium).filter(
+              (entry) => entry.entryType === "project",
+            ).length
+          }{" "}
+          projects{!premium ? " · This month" : ""}
         </Text>
         <Toggle
           title="Show Pay"
@@ -224,20 +220,6 @@ export function HistoryScreen({
                 }
               />
             )}
-            {form && (
-              <EntryForm
-                key={form.id}
-                initial={form.draft}
-                editing
-                jobs={jobs}
-                onCancel={() => setForm(null)}
-                onSave={(draft) => {
-                  const error = onSave(draft, form.id);
-                  if (!error) setForm(null);
-                  return error;
-                }}
-              />
-            )}
           </>
         ) : (
           <>
@@ -245,13 +227,27 @@ export function HistoryScreen({
               <View style={{ flex: 1 }}>
                 <Action
                   title="+ Add Shift"
-                  onPress={() => setForm({ draft: blankDraft("shift") })}
+                  onPress={() =>
+                    setForm({
+                      draft: {
+                        ...blankDraft("shift"),
+                        currency: data.preferences.currency,
+                      },
+                    })
+                  }
                 />
               </View>
               <View style={{ flex: 1 }}>
                 <Action
                   title="+ Add Project"
-                  onPress={() => setForm({ draft: blankDraft("project") })}
+                  onPress={() =>
+                    setForm({
+                      draft: {
+                        ...blankDraft("project"),
+                        currency: data.preferences.currency,
+                      },
+                    })
+                  }
                 />
               </View>
             </View>
@@ -333,7 +329,11 @@ export function HistoryScreen({
                   ]}
                   value={filters.earnings}
                   onChange={(earnings) =>
-                    update({ earnings: earnings as HistoryFilters["earnings"] })
+                    update({
+                      earnings: earnings as HistoryFilters["earnings"],
+                      excludeTips: false,
+                      excludeDeductions: false,
+                    })
                   }
                 />
                 {filters.earnings !== "tips" && (
@@ -343,68 +343,71 @@ export function HistoryScreen({
                       value={filters.excludeTips}
                       onChange={(excludeTips) => update({ excludeTips })}
                     />
-                    {filters.earnings === "net" && (
-                      <Toggle
-                        title="Exclude deductions"
-                        value={filters.excludeDeductions}
-                        onChange={(excludeDeductions) =>
-                          update({ excludeDeductions })
-                        }
-                      />
-                    )}
                   </>
                 )}
                 <Action title="Clear all filters" onPress={clearFilters} />
               </View>
             )}
-            {(entries.length > 0 || activeShift) && (
+            {(entries.length > 0 || live.length > 0) && (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>{totalLabel}</Text>
-                <Text
-                  style={{
-                    color: colors.accent,
-                    fontSize: 30,
-                    fontWeight: "800",
-                    marginTop: 12,
-                  }}
-                >
-                  {amount(total)}
-                </Text>
+                {totals.map((total) => (
+                  <View key={total.currency}>
+                    <Text
+                      style={{
+                        color: colors.accent,
+                        fontSize: 28,
+                        fontWeight: "800",
+                        marginTop: 12,
+                      }}
+                    >
+                      {total.currency}{" "}
+                      {amount(
+                        filters.earnings === "tips"
+                          ? total.tips
+                          : Math.max(
+                              0,
+                              total.wages +
+                                (filters.excludeTips ? 0 : total.tips) -
+                                (filters.earnings === "net"
+                                  ? total.deductions
+                                  : 0),
+                            ),
+                        total.currency,
+                      )}
+                    </Text>
+                    {payVisible && (
+                      <Text style={styles.cardMeta}>
+                        Wages {amount(total.wages, total.currency)} · Tips{" "}
+                        {amount(total.tips, total.currency)}
+                        {filters.excludeTips ? " (excluded)" : ""}
+                        {filters.earnings === "net"
+                          ? ` · Estimated deductions ${amount(total.deductions, total.currency)}`
+                          : ""}
+                      </Text>
+                    )}
+                  </View>
+                ))}
                 <Text style={styles.cardMeta}>
-                  {duration(minutes)} · {entries.length + (activeShift ? 1 : 0)}{" "}
-                  entries
+                  {duration(
+                    totals.reduce((sum, total) => sum + total.minutes, 0),
+                  )}{" "}
+                  · {entries.length} saved entries
+                  {live.length ? ` + ${live.length} live` : ""}
                 </Text>
-                {activeFilterCount > 0 && payVisible && (
-                  <>
-                    <Text style={styles.cardMeta}>Wages: {amount(wages)}</Text>
-                    <Text style={styles.cardMeta}>
-                      Tips: {amount(tips)}
-                      {filters.excludeTips ? " (excluded)" : ""}
-                    </Text>
-                    <Text style={styles.cardMeta}>
-                      Deductions: {amount(deductionsTotal)}
-                      {filters.earnings !== "net" || filters.excludeDeductions
-                        ? " (excluded)"
-                        : ""}
-                    </Text>
-                  </>
+                {filters.earnings === "net" && (
+                  <Text style={styles.cardMeta}>
+                    Estimate from saved deductions for the shown entries,
+                    prorated by date as in Pay. Actual take-home is recorded in
+                    Pay.
+                  </Text>
+                )}
+                {totals.length > 1 && (
+                  <Text style={styles.cardMeta}>
+                    Currencies are shown separately; no conversion is applied.
+                  </Text>
                 )}
               </View>
-            )}
-            {form && (
-              <EntryForm
-                key={form.id ?? form.draft.entryType}
-                initial={form.draft}
-                editing={Boolean(form.id)}
-                jobs={jobs}
-                existingDates={history.map((entry) => entry.date)}
-                onCancel={() => setForm(null)}
-                onSave={(draft) => {
-                  const error = onSave(draft, form.id);
-                  if (!error) setForm(null);
-                  return error;
-                }}
-              />
             )}
             {selectionMode && (
               <View style={styles.card}>
@@ -421,49 +424,41 @@ export function HistoryScreen({
                 />
                 <Action
                   title={`Mark ${selectedEligible.length} as paid`}
-                  disabled={!selectedEligible.length}
+                  disabled={busy || !selectedEligible.length}
                   onPress={confirmBulk}
                 />
               </View>
             )}
-            {activeShift && (
-              <View style={[styles.card, { borderColor: colors.accent }]}>
+            {live.map((shift) => (
+              <View
+                key={shift.id}
+                style={[styles.card, { borderColor: colors.accent }]}
+              >
                 <Text style={[styles.cardTitle, { color: colors.accent }]}>
-                  Live · Active shift
+                  Live ·{" "}
+                  {jobs.find((job) => job.id === shift.jobId)?.name ??
+                    "Active shift"}
                 </Text>
                 <Text style={styles.cardMeta}>
-                  In at {displayTime(activeShift.startedAt)} ·{" "}
-                  {liveDuration(liveMinutes)} worked
+                  In at {displayTime(shift.startedAt)} ·{" "}
+                  {liveDuration(workedMinutes(shift, now))} worked
                 </Text>
                 <Text style={styles.cardMeta}>
                   {amount(
-                    livePay,
-                    jobs.find((job) => job.id === activeShift.jobId)
-                      ?.currency ?? data.preferences.currency,
+                    wagesFor(
+                      shift,
+                      jobs,
+                      shift.id === activeShift?.id ? data.todayPlan : plan,
+                      now,
+                    ),
+                    entryCurrency(shift, data),
                   )}{" "}
                   accruing
                 </Text>
                 <Action title="Open Tracker →" onPress={onOpenTracker} />
-                <Action
-                  title="Discard shift"
-                  onPress={() =>
-                    Alert.alert(
-                      "Discard active shift?",
-                      "This removes the current shift and its reminders.",
-                      [
-                        { text: "Cancel", style: "cancel" },
-                        {
-                          text: "Discard",
-                          style: "destructive",
-                          onPress: onDiscard,
-                        },
-                      ],
-                    )
-                  }
-                />
               </View>
-            )}
-            {entries.length === 0 && !form && !activeShift && (
+            ))}
+            {entries.length === 0 && !live.length && (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>
                   {activeFilterCount || filters.period !== "all"
@@ -573,13 +568,18 @@ export function HistoryScreen({
                       )}
                       <Action
                         title="Edit"
+                        disabled={busy}
                         onPress={() =>
                           setForm({ id: entry.id, draft: draftForEntry(entry) })
                         }
                       />
                       <Action
                         title={entry.paid ? "Mark unpaid" : "Mark paid"}
-                        disabled={status === "Paid via Paycheck"}
+                        disabled={
+                          busy ||
+                          status === "Paid via Paycheck" ||
+                          status === "Incomplete"
+                        }
                         onPress={() => onPaid(entry.id)}
                       />
                       {!project &&
@@ -588,16 +588,17 @@ export function HistoryScreen({
                         entry.date === localDate() && (
                           <Action
                             title="Resume in Tracker"
-                            disabled={Boolean(activeShift)}
+                            disabled={busy || !canResume(entry, data, now)}
                             onPress={() => onReactivate(entry.id)}
                           />
                         )}
                       <Action
                         title="Delete"
+                        disabled={busy}
                         onPress={() =>
                           Alert.alert(
                             "Delete entry?",
-                            "This entry will be removed from History.",
+                            "This removes the entry from History and recalculates Tracker and Pay estimates. Saved paycheck receipts remain unchanged.",
                             [
                               { text: "Cancel", style: "cancel" },
                               {
@@ -623,6 +624,9 @@ export function HistoryScreen({
               disabled={premium && !entries.length}
               onPress={() => (premium ? onExport(entries) : onPremium())}
             />
+            <Text style={styles.cardMeta}>
+              CSV includes the shown saved entries. Running shifts are excluded.
+            </Text>
             {!premium && (
               <PaywallCard
                 title="Full History & Calendar"
@@ -633,6 +637,16 @@ export function HistoryScreen({
           </>
         )}
       </ScrollView>
+      {form && (
+        <EntryModal
+          key={form.id ?? form.draft.entryType}
+          initial={form.draft}
+          id={form.id}
+          data={data}
+          onSave={onSave}
+          onClose={() => setForm(null)}
+        />
+      )}
     </SafeAreaView>
   );
 }

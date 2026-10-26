@@ -330,7 +330,7 @@ test("live work excludes an ongoing lunch and does not accrue pay during it", ()
   assert.equal(model.workedMinutes(entry, noon + 1800000), 180);
 });
 test("resuming a history draft keeps its id and cannot replace an active shift", () => {
-  const entry = build({ end: "" });
+  const entry = build({ date: model.localDate(), start: "00:00", end: "" });
   const state = { ...initial, history: [entry] };
   const resumed = reducer(state, store.reactivateHistoryShift(entry.id));
   assert.equal(resumed.activeShift.id, entry.id);
