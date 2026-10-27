@@ -222,6 +222,10 @@ const appSlice = createSlice({
         email: normalizeEmail(flow.email),
         name: flow.name.trim(),
         createdAt: flow.createdAt,
+        ...(flow.kind === "confirmation" &&
+        (flow.plan === "free" || flow.plan === "premium")
+          ? { plan: flow.plan }
+          : {}),
       };
     },
     clearMockFlow: (state) => {
@@ -251,6 +255,8 @@ const appSlice = createSlice({
       };
       state.auth.session = "mock";
       state.auth.pending = null;
+      if (flow!.plan === "free" || flow!.plan === "premium")
+        state.isPremium = flow!.plan === "premium";
       if (!same) state.auth.onboarding = authDefaults().onboarding;
     },
     completeMockRecovery: (

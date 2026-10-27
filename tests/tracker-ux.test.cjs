@@ -16,6 +16,34 @@ const model = require("../src/features/tracker/model.ts");
 const actions = require("../src/store/appSlice.ts");
 const { appReducer: reduce, initialAppState: initial } = actions;
 const { dailySummary } = require("../src/features/tracker/dailySummary.ts");
+const {
+  trackerSections,
+  visibleTrackerSection,
+} = require("../src/features/tracker/sections.ts");
+test("Tracker section tabs stay separate and retain Completed Today on empty days", () => {
+  assert.deepEqual(
+    trackerSections(true, 0).map((tab) => tab.id),
+    ["completed", "manual", "plan", "reminders", "calculator"],
+  );
+  assert.equal(trackerSections(true, 0)[0].label, "Completed Today (0)");
+  assert.equal(trackerSections(true, 3)[0].label, "Completed Today (3)");
+});
+test("disabling manual editing removes its tab and falls back to Today's Plan", () => {
+  assert.equal(
+    trackerSections(false, 2).some((tab) => tab.id === "manual"),
+    false,
+  );
+  assert.equal(visibleTrackerSection("manual", false), "plan");
+  assert.equal(visibleTrackerSection("manual", true), "manual");
+});
+test("Tracker ticks and changing completed counts do not change the selected section", () => {
+  for (const id of ["completed", "plan", "reminders", "calculator"]) {
+    assert.equal(visibleTrackerSection(id, true), id);
+    assert.equal(visibleTrackerSection(id, false), id);
+    assert.ok(trackerSections(false, 0).some((tab) => tab.id === id));
+    assert.ok(trackerSections(false, 4).some((tab) => tab.id === id));
+  }
+});
 const at = (time, date = "2026-10-20") =>
   new Date(`${date}T${time}:00`).toISOString();
 const shift = (changes = {}) => ({

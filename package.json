@@ -12,12 +12,13 @@
     "test:history": "node --test tests/history.test.cjs tests/history-ux.test.cjs",
     "test:pay": "node --test tests/pay.test.cjs tests/pay-ux.test.cjs",
     "test:jobs": "node --test tests/jobs.test.cjs tests/jobs-ux.test.cjs",
-    "test:settings": "node --test tests/settings.test.cjs tests/settings-ux.test.cjs tests/storage.test.cjs",
+    "test:settings": "node --test tests/settings.test.cjs tests/settings-ux.test.cjs tests/storage.test.cjs tests/account-actions.test.cjs",
     "test:tracker": "node --test tests/tracker.test.cjs tests/tracker-summary.test.cjs tests/calculator.test.cjs tests/tracker-ux.test.cjs",
     "test:calculator": "node --test tests/calculator.test.cjs",
     "test": "node --test tests/*.test.cjs"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
     "@react-native-community/datetimepicker": "8.4.4",
     "@reduxjs/toolkit": "^2.13.0",
     "expo": "~54.0.0",

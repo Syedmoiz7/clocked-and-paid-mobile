@@ -1,9 +1,34 @@
 import { useEffect, useRef, useState } from "react";
-import { Text, View } from "react-native";
+import { Keyboard, Text, View } from "react-native";
 import { Action, Field } from "../../components/FormControls";
 import { useThemeTokens } from "../../providers/ThemeProvider";
 import type { MockAccount } from "../../types";
 import { rebaseAccountDraft, validateAccount, validatePassword } from "./model";
+
+type AccountAction = "profile" | "email" | "password";
+type AccountResult = { action: AccountAction; message: string; error: boolean };
+
+function AccountFeedback({
+  result,
+  action,
+}: {
+  result: AccountResult | null;
+  action: AccountAction;
+}) {
+  const { colors } = useThemeTokens();
+  return result?.action === action ? (
+    <Text
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+      style={{
+        color: result.error ? colors.danger : colors.success,
+        marginTop: 10,
+      }}
+    >
+      {result.message}
+    </Text>
+  ) : null;
+}
 
 export function AccountCard({
   account,
@@ -12,7 +37,6 @@ export function AccountCard({
   onPassword,
   onSignIn,
   onSignOut,
-  onSetup,
 }: {
   account: MockAccount;
   saving: boolean;
@@ -22,15 +46,13 @@ export function AccountCard({
   onPassword: (value: string) => Promise<void>;
   onSignIn: () => void;
   onSignOut: (hasDrafts: boolean) => void;
-  onSetup: () => void;
 }) {
   const { colors, styles } = useThemeTokens();
   const [draft, setDraft] = useState(account),
     [password, setPassword] = useState(""),
     [confirmation, setConfirmation] = useState("");
-  const [feedback, setFeedback] = useState(""),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<AccountResult | null>(null);
+  const [busy, setBusy] = useState<AccountAction | null>(null);
   const previous = useRef(account),
     pending = useRef(false);
   useEffect(() => {
@@ -39,34 +61,46 @@ export function AccountCard({
     setDraft((value) => rebaseAccountDraft(value, old, account));
   }, [account]);
   const run = async (
+    action: AccountAction,
     operation: () => Promise<string | null | void>,
     message: string,
   ) => {
     if (pending.current || saving) return false;
     pending.current = true;
-    setBusy(true);
-    setError("");
-    setFeedback("");
+    Keyboard.dismiss();
+    setBusy(action);
+    setResult(null);
     try {
       const error = await operation();
       if (error) {
-        setError(error);
+        setResult({ action, message: error, error: true });
         return false;
       }
-      setFeedback(message);
+      setResult({ action, message, error: false });
       return true;
     } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Could not save on this device. Your inputs are still here.",
-      );
+      setResult({
+        action,
+        error: true,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not save on this device. Your inputs are still here.",
+      });
       return false;
     } finally {
       pending.current = false;
-      setBusy(false);
+      setBusy(null);
     }
   };
+  const clearResult = (action: AccountAction) => {
+    setResult((current) => (current?.action === action ? null : current));
+  };
+  const showError = (action: AccountAction, message: string) => {
+    Keyboard.dismiss();
+    setResult({ action, message, error: true });
+  };
+  const disabled = busy !== null || saving;
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Account</Text>
@@ -88,17 +122,25 @@ export function AccountCard({
           <Field
             label="Full name"
             value={draft.name}
-            onChange={(name) => setDraft((value) => ({ ...value, name }))}
+            disabled={disabled}
+            onChange={(name) => {
+              clearResult("profile");
+              setDraft((value) => ({ ...value, name }));
+            }}
           />
+          <AccountFeedback result={result} action="profile" />
           <Action
-            title="Save profile (mock)"
-            disabled={busy || saving || draft.name.trim() === account.name}
+            title={
+              busy === "profile" ? "Saving profile…" : "Save profile (mock)"
+            }
+            disabled={disabled || draft.name.trim() === account.name}
             onPress={() => {
               if (!draft.name.trim()) {
-                setError("Enter a display name.");
+                showError("profile", "Enter a display name.");
                 return;
               }
               void run(
+                "profile",
                 () => onAccount({ name: draft.name.trim() }),
                 "Local mock profile saved on this device.",
               );
@@ -113,11 +155,20 @@ export function AccountCard({
             keyboardType="email-address"
             autoCapitalize="none"
             value={draft.email}
-            onChange={(email) => setDraft((value) => ({ ...value, email }))}
+            disabled={disabled}
+            onChange={(email) => {
+              clearResult("email");
+              setDraft((value) => ({ ...value, email }));
+            }}
           />
+          <Text style={styles.cardMeta}>
+            Enter a new email address, such as name@example.com, to enable
+            Update email.
+          </Text>
+          <AccountFeedback result={result} action="email" />
           <Action
-            title="Update email (mock)"
-            disabled={busy || saving || draft.email.trim() === account.email}
+            title={busy === "email" ? "Updating email…" : "Update email (mock)"}
+            disabled={disabled || draft.email.trim() === account.email}
             onPress={() => {
               const error = validateAccount({
                 ...account,
@@ -125,10 +176,11 @@ export function AccountCard({
                 email: draft.email,
               });
               if (error) {
-                setError(error);
+                showError("email", error);
                 return;
               }
               void run(
+                "email",
                 () => onAccount({ email: draft.email.trim() }),
                 "Local email saved. No verification email was sent.",
               );
@@ -138,45 +190,61 @@ export function AccountCard({
             Change password
           </Text>
           <Text style={styles.cardMeta}>
-            Use test values only. Mock sign-in still accepts any non-empty
-            credentials.
+            Use at least 6 characters and enter the same password in both
+            fields. Use test values only. Mock sign-in still accepts any
+            non-empty credentials.
           </Text>
           <Field
             label="New password"
             secure
             value={password}
-            onChange={setPassword}
+            disabled={disabled}
+            onChange={(value) => {
+              clearResult("password");
+              setPassword(value);
+            }}
           />
           <Field
             label="Confirm password"
             secure
             value={confirmation}
-            onChange={setConfirmation}
+            disabled={disabled}
+            onChange={(value) => {
+              clearResult("password");
+              setConfirmation(value);
+            }}
           />
+          <AccountFeedback result={result} action="password" />
           <Action
-            title={busy ? "Updating…" : "Update password (mock)"}
-            disabled={busy || saving}
+            title={
+              busy === "password"
+                ? "Updating password…"
+                : "Update password (mock)"
+            }
+            disabled={disabled}
             onPress={() => {
               const error = validatePassword(password, confirmation);
               if (error) {
-                setError(error);
+                showError("password", error);
                 return;
               }
-              void run(async () => {
-                await onPassword(password);
-              }, "Mock password saved securely on this device. No server credential changed.").then(
-                (saved) => {
-                  if (saved) {
-                    setPassword("");
-                    setConfirmation("");
-                  }
+              void run(
+                "password",
+                async () => {
+                  await onPassword(password);
                 },
-              );
+                "Mock password saved securely on this device. No server credential changed.",
+              ).then((saved) => {
+                if (saved) {
+                  setPassword("");
+                  setConfirmation("");
+                }
+              });
             }}
           />
           <Action
             title="Sign out"
-            disabled={busy || saving}
+            disabled={disabled}
             onPress={() =>
               onSignOut(
                 draft.name.trim() !== account.name ||
@@ -186,28 +254,7 @@ export function AccountCard({
               )
             }
           />
-          <Action
-            title="Review name & job setup"
-            disabled={busy || saving}
-            onPress={onSetup}
-          />
         </>
-      )}
-      {feedback !== "" && (
-        <Text
-          accessibilityRole="alert"
-          style={{ color: colors.success, marginTop: 12 }}
-        >
-          {feedback}
-        </Text>
-      )}
-      {error !== "" && (
-        <Text
-          accessibilityRole="alert"
-          style={{ color: colors.danger, marginTop: 12 }}
-        >
-          {error}
-        </Text>
       )}
     </View>
   );

@@ -92,6 +92,10 @@ export function migrateAuth(saved: Partial<AppState>): MockAuthState {
               email: flow.email,
               name: flow.name,
               createdAt: flow.createdAt,
+              ...(flow.kind === "confirmation" &&
+              (flow.plan === "free" || flow.plan === "premium")
+                ? { plan: flow.plan }
+                : {}),
             }
           : null,
       onboarding: {

@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import {
   AppState as NativeAppState,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -41,6 +42,12 @@ import { Action, Field } from "../components/FormControls";
 import { getDailyQuote, QUOTE_COUNT } from "../features/tracker/quotes";
 import { localDate } from "../utils/dateOnly";
 import { jobAlerts, jobPlan } from "../features/jobs/model";
+import { SectionPanel, SectionTabs } from "../features/tracker/SectionTabs";
+import {
+  trackerSections,
+  visibleTrackerSection,
+  type TrackerSectionId,
+} from "../features/tracker/sections";
 
 type Props = {
   busy: boolean;
@@ -82,40 +89,6 @@ type Props = {
   onEditTimes: (id: string, times: ManualTimes) => Promise<boolean>;
   onPremium: () => void;
 };
-
-function Section({
-  title,
-  subtitle,
-  children,
-  defaultOpen = false,
-}: {
-  title: string;
-  subtitle: string;
-  children: ReactNode;
-  defaultOpen?: boolean;
-}) {
-  const { colors, styles } = useThemeTokens();
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <View style={styles.card}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
-        onPress={() => setOpen((value) => !value)}
-        style={{ alignItems: "center", flexDirection: "row" }}
-      >
-        <View style={{ flex: 1 }}>
-          <Text style={styles.cardTitle}>{title}</Text>
-          <Text style={styles.cardMeta}>{subtitle}</Text>
-        </View>
-        <Text style={{ color: colors.muted, fontSize: 22 }}>
-          {open ? "⌃" : "⌄"}
-        </Text>
-      </Pressable>
-      {open && <View style={{ gap: 14, marginTop: 16 }}>{children}</View>}
-    </View>
-  );
-}
 
 function ToggleRow({
   label,
@@ -268,8 +241,14 @@ export function TrackerScreen(props: Props) {
     preferences.currency;
   const [now, setNow] = useState(new Date());
   const [quote, setQuote] = useState(0);
+  const [selectedSection, setSelectedSection] = useState<TrackerSectionId>(
+    preferences.enableManualEditing && !activeShift ? "manual" : "plan",
+  );
+  const section = visibleTrackerSection(
+    selectedSection,
+    preferences.enableManualEditing,
+  );
   const dailyQuote = getDailyQuote("local-workspace", localDate(now), quote);
-  const [completedOpen, setCompletedOpen] = useState(true);
 
   const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
   const [breakLabel, setBreakLabel] = useState("");
@@ -495,7 +474,7 @@ export function TrackerScreen(props: Props) {
           {working &&
             notificationPermission === "default" &&
             !notificationPromptDismissed && (
-              <View style={styles.card}>
+              <View style={styles.trackerCard}>
                 <Text style={styles.cardTitle}>
                   Allow reminder notifications?
                 </Text>
@@ -519,7 +498,7 @@ export function TrackerScreen(props: Props) {
                 </View>
               </View>
             )}
-          <View style={styles.card}>
+          <View style={styles.trackerCard}>
             {jobs.length > 0 ? (
               <Text style={styles.cardMeta}>JOB FOR THIS SHIFT</Text>
             ) : (
@@ -674,7 +653,7 @@ export function TrackerScreen(props: Props) {
           {lunchDue && (
             <View
               style={[
-                styles.card,
+                styles.trackerCard,
                 {
                   borderColor:
                     now.getTime() >= lunchDue.at
@@ -695,7 +674,7 @@ export function TrackerScreen(props: Props) {
             </View>
           )}
           {working && (
-            <View style={styles.card}>
+            <View style={styles.trackerCard}>
               <Text style={styles.cardTitle}>Shift Progress</Text>
               <View
                 style={{
@@ -759,7 +738,7 @@ export function TrackerScreen(props: Props) {
             </View>
           )}
           {lunchActive && (
-            <View style={[styles.card, { borderColor: colors.warning }]}>
+            <View style={[styles.trackerCard, { borderColor: colors.warning }]}>
               <Text style={{ color: colors.warning, fontWeight: "900" }}>
                 {lunchRemaining === 0 ? "Lunch overdue" : "Lunch countdown"}
               </Text>
@@ -790,7 +769,7 @@ export function TrackerScreen(props: Props) {
             (working &&
               preferences.allowConcurrentShifts &&
               availableJobs.length > 1)) && (
-            <View style={styles.card}>
+            <View style={styles.trackerCard}>
               <Text style={styles.cardTitle}>Additional Active Shifts</Text>
               {extraShifts.map((shift) => {
                 const job = allJobs.find((item) => item.id === shift.jobId);
@@ -892,49 +871,47 @@ export function TrackerScreen(props: Props) {
             now={now.getTime()}
             payVisible={payVisible}
           />
-          {completedToday.length > 0 && (
-            <View style={{ marginTop: 22 }}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ expanded: completedOpen }}
-                onPress={() => setCompletedOpen((value) => !value)}
-                style={{ flexDirection: "row" }}
-              >
-                <Text style={styles.cardTitle}>
-                  Completed Today ({completedToday.length})
-                </Text>
-                <Text
-                  style={{
-                    color: colors.muted,
-                    fontSize: 22,
-                    marginLeft: "auto",
-                  }}
-                >
-                  {completedOpen ? "⌃" : "⌄"}
-                </Text>
-              </Pressable>
-
-              {completedOpen &&
-                completedToday.map((shift) => (
-                  <CompletedShiftCard
-                    key={shift.id}
-                    shift={shift}
-                    jobs={allJobs}
-                    plan={defaultPlan}
-                    currency={preferences.currency}
-                    payVisible={payVisible}
-                    canEdit={preferences.enableManualEditing}
-                    busy={busy}
-                    onEdit={() => setEditingShiftId(shift.id)}
-                  />
-                ))}
-            </View>
-          )}
+          <SectionTabs
+            options={trackerSections(
+              preferences.enableManualEditing,
+              completedToday.length,
+            )}
+            value={section}
+            onChange={(id) => {
+              Keyboard.dismiss();
+              setSelectedSection(id);
+            }}
+          />
+          <SectionPanel
+            visible={section === "completed"}
+            title={`Completed Today (${completedToday.length})`}
+            subtitle="Saved shifts and time corrections"
+          >
+            {completedToday.length === 0 && (
+              <Text style={styles.cardMeta}>
+                No completed shifts today. Clock out or save a completed manual
+                entry to see it here.
+              </Text>
+            )}
+            {completedToday.map((shift) => (
+              <CompletedShiftCard
+                key={shift.id}
+                shift={shift}
+                jobs={allJobs}
+                plan={defaultPlan}
+                currency={preferences.currency}
+                payVisible={payVisible}
+                canEdit={preferences.enableManualEditing}
+                busy={busy}
+                onEdit={() => setEditingShiftId(shift.id)}
+              />
+            ))}
+          </SectionPanel>
 
           {preferences.enableManualEditing && (
-            <Section
+            <SectionPanel
+              visible={section === "manual"}
               key={activeShift?.id ?? "new-entry"}
-              defaultOpen={!working}
               title={!working ? "Enter Today's Times" : "Manual Adjustments"}
               subtitle="Clock-in, lunch and clock-out corrections"
             >
@@ -946,9 +923,10 @@ export function TrackerScreen(props: Props) {
                 onSave={onManualTimes}
                 onCancel={() => {}}
               />
-            </Section>
+            </SectionPanel>
           )}
-          <Section
+          <SectionPanel
+            visible={section === "plan"}
             title="Today's Plan"
             subtitle={`${todayPlan.plannedHours}h work · ${todayPlan.lunchEnabled ? `${todayPlan.lunchMinutes}m lunch` : "no lunch"}`}
           >
@@ -1185,8 +1163,12 @@ export function TrackerScreen(props: Props) {
                 </Text>
               )}
             </View>
-          </Section>
-          <Section title="Reminders" subtitle="Lunch & return-to-work alerts">
+          </SectionPanel>
+          <SectionPanel
+            visible={section === "reminders"}
+            title="Reminders"
+            subtitle="Lunch & return-to-work alerts"
+          >
             <Text style={styles.cardMeta}>
               {working
                 ? `${reminderSchedule.length} reminder rule(s) set for this shift. Phone notifications: ${notificationPermission === "granted" ? "allowed" : notificationPermission === "denied" ? "off — enable in device settings" : "permission not requested"}.`
@@ -1276,8 +1258,9 @@ export function TrackerScreen(props: Props) {
               Job-specific reminder rules are managed in Jobs. Basic lunch and
               return reminders remain available on Free.
             </Text>
-          </Section>
-          <Section
+          </SectionPanel>
+          <SectionPanel
+            visible={section === "calculator"}
             title="Hours Calculator"
             subtitle="Calculate pay from manual times or paid hours"
           >
@@ -1297,7 +1280,7 @@ export function TrackerScreen(props: Props) {
                 description="Preview Premium to explore work hours, start/end times and estimated earnings."
               />
             )}
-          </Section>
+          </SectionPanel>
           {!canCalculate && (
             <PaywallCard
               onPress={onPremium}

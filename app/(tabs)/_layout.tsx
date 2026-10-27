@@ -6,13 +6,14 @@ import { useEffect, useState } from "react";
 import { useAppSelector } from "../../src/store/hooks";
 import { workedMinutes } from "../../src/features/history/model";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Feather from "@expo/vector-icons/Feather";
 
 const tabs = [
-  { name: "tracker", title: "Tracker", icon: "◷" },
-  { name: "history", title: "History", icon: "▤" },
-  { name: "pay", title: "Pay", icon: "$" },
-  { name: "jobs", title: "Jobs", icon: "▣" },
-  { name: "settings", title: "Settings", icon: "⚙" },
+  { name: "tracker", title: "Tracker", icon: "clock" },
+  { name: "history", title: "History", icon: "list" },
+  { name: "pay", title: "Pay", icon: "credit-card" },
+  { name: "jobs", title: "Jobs", icon: "briefcase" },
+  { name: "settings", title: "Settings", icon: "settings" },
 ] as const;
 
 export default function TabsLayout() {
@@ -76,7 +77,23 @@ export default function TabsLayout() {
                   )
                 : undefined,
             tabBarIcon: ({ color }) => (
-              <Text style={{ color, fontSize: 21 }}>{tab.icon}</Text>
+              <View
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                style={{
+                  width: 28,
+                  height: 28,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Feather
+                  name={tab.icon}
+                  size={24}
+                  color={color}
+                  allowFontScaling={false}
+                />
+              </View>
             ),
           }}
         />

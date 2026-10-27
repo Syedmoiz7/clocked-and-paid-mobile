@@ -191,6 +191,7 @@ export type MockAuthFlow = {
   email: string;
   name: string;
   createdAt: number;
+  plan?: "free" | "premium";
 };
 export type MockAuthState = {
   session: "signed-out" | "guest" | "mock";

@@ -204,6 +204,94 @@ test("expired confirmation cannot create mock session", () => {
     data,
   );
 });
+test("signup plan choice takes effect only after valid confirmation", () => {
+  for (const plan of ["free", "premium"]) {
+    const before = { ...initial, isPremium: plan === "free" };
+    const prepared = reduce(
+      before,
+      actions.prepareMockFlow({ ...flow(), plan }),
+    );
+    assert.equal(prepared.isPremium, before.isPremium);
+    assert.equal(prepared.auth.pending.plan, plan);
+    const confirmed = reduce(
+      prepared,
+      actions.completeMockConfirmation({ id: "nonce", now: 1001 }),
+    );
+    assert.equal(confirmed.isPremium, plan === "premium");
+    assert.equal(model.entryDestination(confirmed), "/onboarding");
+    assert.deepEqual(confirmed.history, before.history);
+    assert.deepEqual(confirmed.jobs, before.jobs);
+  }
+});
+test("cancelled or expired signup cannot activate Premium", () => {
+  const prepared = reduce(
+    { ...initial, isPremium: false },
+    actions.prepareMockFlow({ ...flow(), plan: "premium" }),
+  );
+  assert.equal(reduce(prepared, actions.clearMockFlow()).isPremium, false);
+  assert.equal(
+    reduce(
+      prepared,
+      actions.completeMockConfirmation({ id: "nonce", now: 2000000 }),
+    ).isPremium,
+    false,
+  );
+});
+test("signup plan survives restart migration and resending confirmation", () => {
+  let data = reduce(
+    initial,
+    actions.prepareMockFlow({ ...flow(), plan: "premium" }),
+  );
+  const migrated = model.migrateAuth(data);
+  assert.equal(migrated.pending.plan, "premium");
+  data = reduce(
+    data,
+    actions.prepareMockFlow({ ...migrated.pending, id: "resent" }),
+  );
+  data = reduce(
+    data,
+    actions.completeMockConfirmation({ id: "resent", now: 1001 }),
+  );
+  assert.equal(data.isPremium, true);
+});
+test("legacy confirmation keeps current plan and recovery ignores plan metadata", () => {
+  const before = { ...initial, isPremium: true };
+  const legacy = reduce(before, actions.prepareMockFlow(flow()));
+  assert.equal(
+    reduce(legacy, actions.completeMockConfirmation({ id: "nonce", now: 1001 }))
+      .isPremium,
+    true,
+  );
+  const recovery = reduce(
+    before,
+    actions.prepareMockFlow({ ...flow("recovery"), plan: "free" }),
+  );
+  assert.equal(recovery.auth.pending.plan, undefined);
+  assert.equal(
+    reduce(recovery, actions.completeMockRecovery({ id: "nonce", now: 1001 }))
+      .isPremium,
+    true,
+  );
+});
+test("unsupported signup plan values are not persisted or applied", () => {
+  const data = reduce(
+    { ...initial, isPremium: false },
+    actions.prepareMockFlow({ ...flow(), plan: "third-tier" }),
+  );
+  assert.equal(data.auth.pending.plan, undefined);
+  assert.equal(
+    model.migrateAuth({
+      ...data,
+      auth: { ...data.auth, pending: { ...flow(), plan: "third-tier" } },
+    }).pending.plan,
+    undefined,
+  );
+  assert.equal(
+    reduce(data, actions.completeMockConfirmation({ id: "nonce", now: 1001 }))
+      .isPremium,
+    false,
+  );
+});
 test("recovery callback cannot be used as confirmation and does not sign in", () => {
   let data = reduce(initial, actions.prepareMockFlow(flow("recovery")));
   assert.deepEqual(

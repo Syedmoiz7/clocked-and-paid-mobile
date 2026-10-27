@@ -4,6 +4,7 @@ import { Action, Choices } from "../components/FormControls";
 import { useThemeTokens } from "../providers/ThemeProvider";
 import type { AppState } from "../types";
 import type { Credentials } from "../features/auth/model";
+import { PlanCards, type PlanChoice } from "../features/auth/PlanCards";
 import {
   AuthField,
   AuthLayout,
@@ -13,7 +14,7 @@ import {
 
 export type AuthActions = {
   onSignIn: (value: Credentials) => Promise<void>;
-  onSignUp: (value: Credentials) => Promise<void>;
+  onSignUp: (value: Credentials, plan: PlanChoice) => Promise<void>;
   onRecovery: (email: string) => Promise<void>;
   onResend: () => void;
   onCallback: () => void;
@@ -50,6 +51,9 @@ export function AuthScreen({
     [info, setInfo] = useState(""),
     [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
+  const [plan, setPlan] = useState<PlanChoice>(
+    data.auth.pending?.plan ?? (data.isPremium ? "premium" : "free"),
+  );
   const changeView = (next: AuthView) => {
     if (inFlight.current) return;
     setView(next);
@@ -157,12 +161,25 @@ export function AuthScreen({
             onChange={setPassword}
           />
           {view === "sign-up" && (
-            <AuthField
-              label="Confirm password"
-              password
-              value={confirmation}
-              onChange={setConfirmation}
-            />
+            <>
+              <AuthField
+                label="Confirm password"
+                password
+                value={confirmation}
+                onChange={setConfirmation}
+              />
+              <Text style={[styles.cardTitle, { marginTop: 20 }]}>
+                Choose your plan
+              </Text>
+              <PlanCards
+                selection={{ value: plan, onChange: setPlan, disabled: busy }}
+              />
+              <Text style={styles.cardMeta}>
+                {plan === "premium"
+                  ? "Premium starts as a no-charge preview after mock confirmation. No subscription or payment is created."
+                  : "Free starts after mock confirmation. You can preview Premium later from Plans."}
+              </Text>
+            </>
           )}
           <PrimaryAction
             title={
@@ -177,7 +194,10 @@ export function AuthScreen({
               void run(
                 () =>
                   view === "sign-up"
-                    ? actions.onSignUp({ email, password, name, confirmation })
+                    ? actions.onSignUp(
+                        { email, password, name, confirmation },
+                        plan,
+                      )
                     : actions.onSignIn({ email, password }),
                 view === "sign-up" ? "confirmation" : undefined,
               );
@@ -218,6 +238,15 @@ export function AuthScreen({
             For {pending?.email ?? email}. This is a demonstration; no email was
             sent.
           </Text>
+          {view === "confirmation" && pending?.plan && (
+            <Text style={styles.cardMeta}>
+              Selected plan:{" "}
+              {pending.plan === "premium"
+                ? "Premium preview (no charge)"
+                : "Free · Ad-supported"}
+              .
+            </Text>
+          )}
           <PrimaryAction
             title={
               view === "confirmation"

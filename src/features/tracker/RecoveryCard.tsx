@@ -43,7 +43,7 @@ export function RecoveryCard({
     ? completedShiftTotals(preview.entry, data.jobs, data.defaultPlan, currency)
     : null;
   return (
-    <View style={[styles.card, { borderColor: colors.warning }]}>
+    <View style={[styles.trackerCard, { borderColor: colors.warning }]}>
       <Text style={styles.cardTitle}>Unfinished shift</Text>
       <Text style={styles.cardMeta}>
         Clocked in {shift.date} at {timeLabel(shift.startedAt)}. Choose when you

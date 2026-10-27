@@ -125,8 +125,6 @@ export default function SettingsRoute() {
             await mockAuth.setPassword(password, password);
           }),
         onSignIn: () => router.push("/auth"),
-        onSetup: () =>
-          router.push({ pathname: "/onboarding", params: { review: "1" } }),
         onSignOut: (hasDrafts) =>
           Alert.alert(
             "Sign out of mock account?",

@@ -38,12 +38,13 @@ export default function AuthRoute() {
           dispatch(enterMockSession(account));
           router.replace(entryDestination(store.getState().app));
         },
-        onSignUp: async (input) => {
+        onSignUp: async (input, plan) => {
           const account = await mockAuth.signUp(input);
           dispatch(
             prepareMockFlow({
               id: Crypto.randomUUID(),
               kind: "confirmation",
+              plan,
               email: account.email,
               name: account.name,
               createdAt: Date.now(),

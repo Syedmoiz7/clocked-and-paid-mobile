@@ -12,21 +12,9 @@ import {
 import { useThemeTokens } from "../src/providers/ThemeProvider";
 import { useAppDispatch, useAppSelector } from "../src/store/hooks";
 import { enterGuest, setPremiumPreview } from "../src/store/appSlice";
-
-const comparisons = [
-  {
-    title: "Free",
-    detail:
-      "One job profile, live clock-in/out, lunch and breaks, basic reminders, current-month History, current-period Pay, clock format and basic theme.",
-  },
-  {
-    title: "Premium",
-    detail:
-      "Multiple job profiles, Hours Calculator, full History/Calendar and export, advanced Pay/trends/estimator, deduction management, backup/recovery and the full theme palette.",
-  },
-];
+import { PlanCards } from "../src/features/auth/PlanCards";
 export default function PlansRoute() {
-  const { colors, styles } = useThemeTokens();
+  const { styles } = useThemeTokens();
   const data = useAppSelector((state) => state.app),
     dispatch = useAppDispatch();
   const params = useLocalSearchParams<{
@@ -71,26 +59,7 @@ export default function PlansRoute() {
             app-store purchase is created by these controls.
           </Text>
         </View>
-        {comparisons.map((item) => (
-          <View
-            key={item.title}
-            style={[
-              styles.card,
-              item.title === "Premium" && { borderColor: colors.accent },
-            ]}
-          >
-            <Text style={styles.cardTitle}>{item.title}</Text>
-            <Text style={styles.subtitle}>{item.detail}</Text>
-          </View>
-        ))}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Advertising model preview</Text>
-          <Text style={styles.cardMeta}>
-            The audit proposes an ad-supported Free tier and ad-free Premium. No
-            ad provider, ad SDK or in-app ad placement is configured; neither
-            tier loads real ads in this build.
-          </Text>
-        </View>
+        <PlanCards />
         {data.isPremium ? (
           <PrimaryAction
             title="End Premium preview & use Free"

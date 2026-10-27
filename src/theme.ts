@@ -74,6 +74,14 @@ export const makeStyles = (colors: ThemeColors) =>
       marginTop: 16,
     },
     cardTitle: { color: colors.text, fontSize: 17, fontWeight: "700" },
+    trackerCard: {
+      backgroundColor: colors.surface,
+      borderColor: `${colors.muted}40`,
+      borderRadius: 18,
+      borderWidth: 1,
+      padding: 18,
+      marginTop: 16,
+    },
     cardMeta: { color: colors.muted, fontSize: 13, marginTop: 5 },
     button: {
       alignItems: "center",

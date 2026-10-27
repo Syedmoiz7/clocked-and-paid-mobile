@@ -19,7 +19,7 @@ export function TodaySummaryCard({
   const [mode, setMode] = useState("gross");
   const summary = dailySummary(data, now);
   return (
-    <View style={styles.card}>
+    <View style={styles.trackerCard}>
       <Text style={styles.cardTitle}>Today's Summary</Text>
       <Text style={styles.cardMeta}>
         All entries dated today · completed work plus running shifts
