@@ -993,17 +993,23 @@ export function TrackerScreen(props: Props) {
             {todayPlan.planningMode === "duration" ? (
               <View>
                 <Text style={styles.cardMeta}>Planned Work Hours</Text>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    flexWrap: "wrap",
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={{
                     gap: 8,
-                    marginTop: 7,
+                    paddingVertical: 7,
+                    alignItems: "center",
                   }}
                 >
                   {[6, 7, 8, 9, 10, 12].map((hours) => (
                     <Pressable
                       key={hours}
+                      accessibilityRole="button"
+                      accessibilityState={{
+                        selected: todayPlan.plannedHours === hours,
+                      }}
                       onPress={() => onPlanChange({ plannedHours: hours })}
                       style={{
                         backgroundColor:
@@ -1013,11 +1019,14 @@ export function TrackerScreen(props: Props) {
                         borderColor: colors.border,
                         borderRadius: 18,
                         borderWidth: 1,
+                        minHeight: 44,
+                        justifyContent: "center",
                         paddingHorizontal: 14,
                         paddingVertical: 8,
                       }}
                     >
                       <Text
+                        numberOfLines={1}
                         style={{
                           color:
                             todayPlan.plannedHours === hours
@@ -1030,16 +1039,16 @@ export function TrackerScreen(props: Props) {
                       </Text>
                     </Pressable>
                   ))}
-                  <NumericField
-                    label="Custom work hours"
-                    value={String(todayPlan.plannedHours)}
-                    onChange={(value) => {
-                      const hours = Number(value);
-                      if (hours > 0 && hours <= 24)
-                        onPlanChange({ plannedHours: hours });
-                    }}
-                  />
-                </View>
+                </ScrollView>
+                <NumericField
+                  label="Custom work hours"
+                  value={String(todayPlan.plannedHours)}
+                  onChange={(value) => {
+                    const hours = Number(value);
+                    if (hours > 0 && hours <= 24)
+                      onPlanChange({ plannedHours: hours });
+                  }}
+                />
               </View>
             ) : (
               <TimePickerField

@@ -11,6 +11,7 @@ import {
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useThemeTokens } from "../providers/ThemeProvider";
 import { localDate, validDate } from "../utils/dateOnly";
+import { useAndroidPicker } from "./useAndroidPicker";
 export function Action({
   title,
   onPress,
@@ -131,15 +132,23 @@ export function DateField({
   const { colors, styles } = useThemeTokens();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(new Date());
+  const androidPicker = useAndroidPicker("date", (date) =>
+    onChange(localDate(date)),
+  );
   return (
     <View style={{ marginTop: 10 }}>
       <Text style={styles.cardMeta}>{label}</Text>
       <Action
         title={value || "Choose date"}
         onPress={() => {
-          setDraft(
-            validDate(value) ? new Date(`${value}T12:00:00`) : new Date(),
-          );
+          const initialDate = validDate(value)
+            ? new Date(`${value}T12:00:00`)
+            : new Date();
+          if (Platform.OS === "android") {
+            androidPicker.show(initialDate);
+            return;
+          }
+          setDraft(initialDate);
           setOpen(true);
         }}
       />

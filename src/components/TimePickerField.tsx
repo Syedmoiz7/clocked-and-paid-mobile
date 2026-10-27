@@ -5,6 +5,7 @@ import DateTimePicker, {
 } from "@react-native-community/datetimepicker";
 import { useThemeTokens } from "../providers/ThemeProvider";
 import { useClockFormat } from "../features/settings/useClockFormat";
+import { useAndroidPicker } from "./useAndroidPicker";
 
 function parseTime(value: string) {
   const [hours = NaN, minutes = NaN] = value.split(":").map(Number);
@@ -49,8 +50,16 @@ export function TimePickerField({
   const { format, timeLabel } = useClockFormat();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Date | null>(null);
+  const androidPicker = useAndroidPicker("time", (date) =>
+    onChange(valueForDate(date)),
+  );
+  const expanded = open || androidPicker.isOpen;
 
   const show = () => {
+    if (Platform.OS === "android") {
+      androidPicker.show(dateForValue(value), format === "24h");
+      return;
+    }
     setDraft(dateForValue(value));
     setOpen(true);
   };
@@ -69,12 +78,12 @@ export function TimePickerField({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={label ?? placeholder}
-        accessibilityState={{ disabled, expanded: open }}
+        accessibilityState={{ disabled, expanded }}
         disabled={disabled}
         onPress={show}
         style={{
           backgroundColor: colors.background,
-          borderColor: open ? colors.accent : colors.border,
+          borderColor: expanded ? colors.accent : colors.border,
           borderRadius: 12,
           borderWidth: 1,
           marginTop: label ? 5 : 0,
