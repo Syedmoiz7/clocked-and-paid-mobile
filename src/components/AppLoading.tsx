@@ -1,4 +1,4 @@
-import { Text, View } from "react-native";
+import { ActivityIndicator, Image, Text, View } from "react-native";
 import { useThemeTokens } from "../providers/ThemeProvider";
 
 export function AppLoading() {
@@ -12,7 +12,16 @@ export function AppLoading() {
         justifyContent: "center",
       }}
     >
-      <Text style={{ color: colors.muted }}>Loading Clocked & Paid…</Text>
+      <Image
+        source={require("../../assets/branding/splash-icon.png")}
+        style={{ width: 200, height: 200 }}
+        resizeMode="contain"
+        accessible={false}
+      />
+      <ActivityIndicator color={colors.accent} style={{ marginTop: 16 }} />
+      <Text style={{ color: colors.muted, marginTop: 12 }}>
+        Loading Clocked & Paid…
+      </Text>
     </View>
   );
 }

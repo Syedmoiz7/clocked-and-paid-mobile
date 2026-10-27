@@ -6,17 +6,33 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "scheme": "clockedandpaid",
+    "icon": "./assets/branding/icon.png",
+    "backgroundColor": "#100a0d",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.clockedandpaid.mobile"
     },
     "android": {
-      "package": "com.clockedandpaid.mobile"
+      "package": "com.clockedandpaid.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/branding/adaptive-foreground.png",
+        "monochromeImage": "./assets/branding/adaptive-monochrome.png",
+        "backgroundColor": "#bd3c6b"
+      }
     },
     "web": {
       "bundler": "metro"
     },
     "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/branding/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#100a0d"
+        }
+      ],
       "expo-sqlite",
       "expo-secure-store",
       "expo-router",

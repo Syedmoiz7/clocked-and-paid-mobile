@@ -19,6 +19,7 @@ import {
 } from "../features/settings/backup";
 import { Action } from "../components/FormControls";
 import { useThemeTokens } from "../providers/ThemeProvider";
+import * as SplashScreen from "expo-splash-screen";
 
 export function AppBootstrap({ children }: PropsWithChildren) {
   const dispatch = useAppDispatch();
@@ -78,78 +79,90 @@ export function AppBootstrap({ children }: PropsWithChildren) {
         );
   }, [appState, ready]);
 
-  return ready ? (
-    <PrivacyProvider>
-      {children}
-      <JobReminderHost />
-      {error !== "" && (
+  return (
+    <View
+      key={ready ? "ready" : error ? "error" : "loading"}
+      style={styles.screen}
+      onLayout={() => {
+        if (ready || error) SplashScreen.hide();
+      }}
+    >
+      {ready ? (
+        <PrivacyProvider>
+          {children}
+          <JobReminderHost />
+          {error !== "" && (
+            <View
+              style={{
+                position: "absolute",
+                bottom: 100,
+                left: 20,
+                right: 20,
+                backgroundColor: colors.surface,
+                padding: 12,
+              }}
+            >
+              <Text accessibilityRole="alert" style={{ color: colors.danger }}>
+                {error}
+              </Text>
+            </View>
+          )}
+        </PrivacyProvider>
+      ) : error ? (
         <View
-          style={{
-            position: "absolute",
-            bottom: 100,
-            left: 20,
-            right: 20,
-            backgroundColor: colors.surface,
-            padding: 12,
-          }}
+          style={[styles.screen, { justifyContent: "center", padding: 24 }]}
         >
-          <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-            {error}
-          </Text>
-        </View>
-      )}
-    </PrivacyProvider>
-  ) : error ? (
-    <View style={[styles.screen, { justifyContent: "center", padding: 24 }]}>
-      <Text style={styles.cardTitle}>Workspace unavailable</Text>
-      <Text style={styles.cardMeta}>{error}</Text>
-      <Action
-        title="Restore device recovery snapshot"
-        onPress={() =>
-          Alert.alert(
-            "Restore device recovery?",
-            "Your unreadable workspace will only be replaced after the device snapshot passes validation. Your secure privacy lock is not changed.",
-            [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Restore",
-                onPress: () => {
-                  void (async () => {
-                    const snapshot = await loadRecovery();
-                    if (!snapshot)
-                      throw new Error(
-                        "No device recovery snapshot is available. The unreadable workspace was not changed.",
+          <Text style={styles.cardTitle}>Workspace unavailable</Text>
+          <Text style={styles.cardMeta}>{error}</Text>
+          <Action
+            title="Restore device recovery snapshot"
+            onPress={() =>
+              Alert.alert(
+                "Restore device recovery?",
+                "Your unreadable workspace will only be replaced after the device snapshot passes validation. Your secure privacy lock is not changed.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Restore",
+                    onPress: () => {
+                      void (async () => {
+                        const snapshot = await loadRecovery();
+                        if (!snapshot)
+                          throw new Error(
+                            "No device recovery snapshot is available. The unreadable workspace was not changed.",
+                          );
+                        const imported = parseBackup(
+                          backupText(snapshot.state),
+                          "recovery.json",
+                          initialAppState,
+                        );
+                        const recovered = applyImport(
+                          initialAppState,
+                          imported,
+                          "replace",
+                          true,
+                        );
+                        await saveAppState(recovered);
+                        dispatch(hydrate(recovered));
+                        setError("");
+                        setReady(true);
+                      })().catch((e) =>
+                        setError(
+                          e instanceof Error
+                            ? e.message
+                            : "Recovery failed; existing storage was not changed.",
+                        ),
                       );
-                    const imported = parseBackup(
-                      backupText(snapshot.state),
-                      "recovery.json",
-                      initialAppState,
-                    );
-                    const recovered = applyImport(
-                      initialAppState,
-                      imported,
-                      "replace",
-                      true,
-                    );
-                    await saveAppState(recovered);
-                    dispatch(hydrate(recovered));
-                    setError("");
-                    setReady(true);
-                  })().catch((e) =>
-                    setError(
-                      e instanceof Error
-                        ? e.message
-                        : "Recovery failed; existing storage was not changed.",
-                    ),
-                  );
-                },
-              },
-            ],
-          )
-        }
-      />
+                    },
+                  },
+                ],
+              )
+            }
+          />
+        </View>
+      ) : (
+        <AppLoading />
+      )}
     </View>
-  ) : (
-    <AppLoading />
   );
 }
